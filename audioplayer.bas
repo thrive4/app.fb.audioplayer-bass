@@ -268,10 +268,21 @@ Function getmp3cover(filename As String) As boolean
                 bend = instr(1, mid(buffer, instr(1, buffer, "JFIF")), CHR(&hFF, &hD9)) + 7
             end if
             chunk = mid(buffer, instr(buffer, "JFIF") - 6, bend)
+            ' thumbnail detection
+            if instr(instr(1, buffer, "JFIF") + 4, buffer, "JFIF") > 0 then
+                chunk = mid(buffer, instr(10, buffer, CHR(&hFF, &hD8)), instr(instr(buffer, CHR(&hFF, &hD9)) + 1, buffer, CHR(&hFF, &hD9)) - (instr(10, buffer, CHR(&hFF, &hD8)) - 2))
+                ' thumbnail in thumbnail edge case ffd8 ffd8 ffd9 ffd9 pattern in jpeg
+                if instr(chunk, CHR(&hFF, &hD8, &hFF)) > 0 then
+                    chunk = mid(buffer,_
+                    instr(1,buffer, CHR(&hFF, &hD8)),_
+                    instr(instr(instr(instr(1,buffer, CHR(&hFF, &hD9)) + 1, buffer, CHR(&hFF, &hD9)) + 1, buffer, CHR(&hFF, &hD9))_
+                    , buffer, CHR(&hFF, &hD9)) + 2 - instr(buffer, CHR(&hFF, &hD8)))
+                end if
+            end if
             ext = ".jpg"
         end if
-        ' use ext to catch false png
-        if instr(1, buffer, "‰PNG") > 0 and ext = "" then
+        ' use ext and exif check to catch false png
+        if instr(1, buffer, "‰PNG") > 0 and instr(1, buffer, "Exif") = 0 and ext = "" then
             ' override end png if tag is present
             if instr(1, buffer, "IEND") > 0 then
                 bend = instr(1, mid(buffer, instr(1, buffer, "‰PNG")), "IEND") + 7
@@ -290,6 +301,12 @@ Function getmp3cover(filename As String) As boolean
             else
                 chunk = mid(buffer, instr(buffer, "Lavc58") - 6, bend)
             end if
+            ext = ".jpg"
+        end if
+        ' last resort just check on begin and end marker very tricky...
+        ' see https://stackoverflow.com/questions/4585527/detect-end-of-file-for-jpg-images#4614629
+        if instr(buffer, CHR(&hFF, &hD8)) > 0 and ext = ""then
+            chunk = mid(buffer, instr(1, buffer, CHR(&hFF, &hD8)), instr(1, buffer, CHR(&hFF, &hD9)))
             ext = ".jpg"
         end if
         buffer = ""
@@ -407,9 +424,6 @@ Do
 	Dim As String key = UCase(Inkey)
 
 	Select Case key
-        Case "P"
-            ' play mp3
-            BASS_ChannelPlay(fx1Handle, 0)
         Case " "
             ' toggle mp3 mute status
             If musicstate Then
@@ -507,7 +521,6 @@ Do
     Locate currentLine, 1
     ' basic interaction
     Print "======= > BASS library demonstration < ========"
-    Print "press p     to play"
     Print "press .     to play next"
     Print "press ,     to play previous"
     Print "press ]     to skip forward   10 secs"

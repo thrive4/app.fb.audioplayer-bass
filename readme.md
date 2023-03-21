@@ -5,7 +5,7 @@ supported playlists .m3u, .pls\
 ascii interface\
 \
 basic config options in conf.ini\
-locale          = <locale>\
+locale          = <en or de>\
 defaultvolume   = <0.0 .. 1.0>\
 playtype        = <shuffle, linear>\
 \
@@ -31,7 +31,6 @@ threads   7 / 8\
 cpu       ~1% (low) / ~2%\
 tested on intel i5-6600T
 ## navigation
-press p     to play\
 press .     to play next\
 press ,     to play previous\
 press ]     to skip forward   10 secs\
