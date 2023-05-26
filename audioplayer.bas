@@ -5,18 +5,22 @@
 
 #Include once "bass.bi"
 #include once "windows.bi"
+#Include once "win/mmsystem.bi"
 #include once "utilfile.bas"
 #include once "shuffleplay.bas"
 #cmdline "app.rc"
 
 ' setup playback
 dim filename        as string = "test.mp3"
+dim fileext         as string = ""
 Dim secondsPosition As Double
 dim chanlengthbytes as QWORD
 dim tracklength     as double
 Dim musicstate      As boolean
-Dim currentvolume   as single = 1.0
-dim locale          as string = "en"
+Dim currentvolume   as ulong
+dim sourcevolume    as single = 0.3f
+dim drcvolume       as single = 0.0f
+dim drc             as string = "true"
 
 ' setup parsing pls and m3u
 dim chkcontenttype  as boolean = false
@@ -30,7 +34,7 @@ common shared currentitem as integer
 ' setup list of soundfiles
 dim itemlist    as string = appname
 dim imagefolder as string
-dim filetypes   as string = ".mp3, .mp4, .ogg, .wav" 
+dim filetypes   as string = ".mp3, .mp4, .ogg, .wav"
 ' options shuffle, linear
 dim playtype    as string = "linear"
 
@@ -41,7 +45,7 @@ dim inival  as string
 dim inifile as string = exepath + "\conf.ini"
 dim f       as integer
 if FileExists(inifile) = false then
-    logentry("error", inifile + "file does not excist")
+    logentry("error", inifile + " file does not excist")
 else 
     f = readfromfile(inifile)
     Do Until EOF(f)
@@ -52,7 +56,7 @@ else
             if inival <> "" then
                 select case inikey
                     case "defaultvolume"
-                        currentvolume = val(inival)
+                        sourcevolume = val(inival)
                     case "locale"
                         locale = inival
                     case "usecons"
@@ -61,21 +65,16 @@ else
                         logtype = inival
                     case "playtype"
                         playtype = inival
+                    case "drc"
+                        drc = inival
                 end select
             end if
             'print inikey + " - " + inival
         end if    
     loop
     close(f)    
-end if    
-
-' get media
-imagefolder = command(1)
-if imagefolder = "" then
-    imagefolder = exepath
 end if
-maxitems = createlist(imagefolder, filetypes, "music")
-filename = listplay(playtype, "music")
+drcvolume = sourcevolume
 
 ' parse commandline for options overides conf.ini settings
 select case command(1)
@@ -86,8 +85,41 @@ select case command(1)
         delfile(exepath + "\" + "music" + ".lst")
         logentry("terminate", "normal termination " + appname)
 end select
+
+' get media
+imagefolder = command(1)
+if imagefolder = "" then
+    imagefolder = exepath
+end if
 if instr(command(1), ".") <> 0 then
-    filename = imagefolder    
+    fileext = lcase(mid(command(1), instrrev(command(1), ".")))
+    if instr(1, filetypes, fileext) = 0 and instr(1, ".m3u, .pls", fileext) = 0 then
+        print command(1) + " file type not supported"
+        end
+    end if
+    if FileExists(exepath + "\" + command(1)) = false then
+        if FileExists(imagefolder) then
+            'nop
+        else
+            print imagefolder + " does not excist or is incorrect"
+            end
+        end if
+    else
+        imagefolder = exepath + "\" + command(1)
+    end if
+else
+    if checkpath(imagefolder) = false then
+        print imagefolder + " does not excist or is incorrect"
+        end
+    end if
+end if
+if instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then
+    maxitems = createlist(imagefolder, filetypes, "music")
+    filename = listplay(playtype, "music")
+end if
+
+if instr(command(1), ".") <> 0 and instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then
+    filename = imagefolder
     imagefolder = left(command(1), instrrev(command(1), "\") - 1)
     chk = createlist(imagefolder, filetypes, "music")
 end if    
@@ -138,216 +170,22 @@ function compoundtime(m As Long) as string
     return dummy
 End function
 
-' code by squall4226
-' see https://www.freebasic.net/forum/viewtopic.php?p=149207&hilit=user+need+TALB+for+album#p149207
-Function getmp3tag(searchtag As String, fn As String) As String
-   'so we can avoid having the user need TALB for album, TIT2 for title etc, although they are accepted
-   Dim As Integer skip, offset' in order to read certain things right
-   Dim As UInteger sig_to_find, count, fnum, maxcheck = 100000
-   dim as UShort tag_length
-   Dim As UShort unitest, mp3frametest
-   Dim As String tagdata
-
-   Select Case UCase(searchtag)
-        Case "HEADER", "ID3"
-            searchtag = "ID3" & Chr(&h03)
-        Case "TITLE", "TIT2"
-            searchtag = "TIT2"
-        Case "ARTIST", "TPE1"
-            searchtag = "TPE1"
-        Case "ALBUM", "TALB"
-            searchtag = "TALB"
-        Case "COMMENT", "COMM"
-            searchtag = "COMM"
-        Case "COPYRIGHT", "TCOP"
-            searchtag = "TCOP"
-        Case "COMPOSER", "TCOM"
-            searchtag = "TCOM"
-        Case "BEATS PER MINUTE", "BPM", "TPBM"
-            searchtag = "TBPM"
-        Case "PUBLISHER", "TPUB"
-            searchtag = "TPUB"
-        Case "URL", "WXXX"
-            searchtag = "WXXX"
-        Case "PLAY COUNT" "PCNT"
-            searchtag = "PCNT"
-        Case "GENRE", "TCON"
-            searchtag = "TCON"
-        Case "ENCODER", "TENC"
-            searchtag = "TENC"
-        Case "TRACK", "TRACK NUMBER", "TRCK"
-            searchtag = "TRCK"
-        Case "YEAR", "TYER"
-            searchtag = "TYER"      
-        'Special, in this case we will return the datasize if present, or "-1" if no art
-        Case "PICTURE", "APIC"
-            searchtag = "APIC"
-            'Not implemented yet!
-        Case Else
-            'Tag may be invalid, but search anyway, there are MANY tags, and we have error checking
-   End Select
-
-   fnum = FreeFile
-   Open fn For Binary Access Read As #fnum
-   If Lof(fnum) < maxcheck Then maxcheck = Lof(fnum)
-   For count = 0 to maxcheck Step 1
-        Get #fnum, count, sig_to_find
-        If sig_to_find = Cvi(searchtag) Then
-             If searchtag = "ID3" & Chr(&h03) Then
-                Close #fnum
-                Return "1" 'Because there is no data here, we were just checking for the ID3 header
-             EndIf
-             'test for unicode
-             Get #fnum, count+11, unitest         
-             If unitest = &hFEFF Then 'unicode string
-                skip = 4
-                offset = 13           
-             Else 'not unicode string
-                skip = 0
-                offset = 10            
-             EndIf
-             
-             Get #fnum, count +7, tag_length 'XXXXYYYZZ Where XXXX is the TAG, YYY is flags or something, ZZ is size
-
-             If tag_length-skip < 1 Then
-                Close #fnum
-                Return "ERROR" 'In case of bad things
-             EndIf
-             
-             Dim As Byte dataget(1 To tag_length-skip)
-             Get #fnum, count+offset, dataget()
-             
-             For i As Integer = 1 To tag_length - skip
-                if dataget(i) < 4 then dataget(i) = 0 ' remove odd characters
-                If dataget(i) <> 0 Then tagdata + = Chr(dataget(i)) 'remove null spaces from ASCII data in UNICODE string
-             Next
-        End If
-        If tagdata <> "" then exit For ' stop searching!
-   Next
-   Close #fnum
-   
-   If Len(tagdata) = 0 Then
-        'If the tag was just not found or had no data then "----"
-        tagdata = "----"
-   EndIf
-
-   Return tagdata
-
-End Function
-
-' attempt to extract and write cover art of mp3 to temp thumb file
-Function getmp3cover(filename As String) As boolean
-    Dim buffer  As String
-    dim chunk   as string
-    dim length  as string
-    dim bend    as integer
-    dim ext     as string = ""
-    dim thumb   as string
-    ' remove old thumb if present
-    delfile(exepath + "\thumb.jpg")
-    delfile(exepath + "\thumb.png")
-    Open filename For Binary Access Read As #1
-        If LOF(1) > 0 Then
-            buffer = String(LOF(1), 0)
-            Get #1, , buffer
-        End If
-    Close #1
-    if instr(1, buffer, "APIC") > 0 then
-        length = mid(buffer, instr(buffer, "APIC") + 4, 4)
-        ' ghetto check funky first 4 bytes signifying length image
-        ' not sure how reliable this info is
-        ' see comment codecaster https://stackoverflow.com/questions/47882569/id3v2-tag-issue-with-apic-in-c-net
-        if val(asc(length, 1) & asc(length, 2)) = 0 then
-            bend = (asc(length, 3) shl 8) or asc(length, 4)
-        else
-            bend = (asc(length, 1) shl 24 + asc(length, 2) shl 16 + asc(length, 3) shl 8 or asc(length, 4))
-        end if
-        if instr(1, buffer, "JFIF") > 0 then
-            ' override end jpg if marker FFD9 is present
-            if instr(buffer, CHR(&hFF, &hD9)) > 0 then
-                bend = instr(1, mid(buffer, instr(1, buffer, "JFIF")), CHR(&hFF, &hD9)) + 7
-            end if
-            chunk = mid(buffer, instr(buffer, "JFIF") - 6, bend)
-            ' thumbnail detection
-            if instr(instr(1, buffer, "JFIF") + 4, buffer, "JFIF") > 0 then
-                chunk = mid(buffer, instr(10, buffer, CHR(&hFF, &hD8)), instr(instr(buffer, CHR(&hFF, &hD9)) + 1, buffer, CHR(&hFF, &hD9)) - (instr(10, buffer, CHR(&hFF, &hD8)) - 2))
-                ' thumbnail in thumbnail edge case ffd8 ffd8 ffd9 ffd9 pattern in jpeg
-                if instr(chunk, CHR(&hFF, &hD8, &hFF)) > 0 then
-                    chunk = mid(buffer,_
-                    instr(1,buffer, CHR(&hFF, &hD8)),_
-                    instr(instr(instr(instr(1,buffer, CHR(&hFF, &hD9)) + 1, buffer, CHR(&hFF, &hD9)) + 1, buffer, CHR(&hFF, &hD9))_
-                    , buffer, CHR(&hFF, &hD9)) + 2 - instr(buffer, CHR(&hFF, &hD8)))
-                end if
-            end if
-            ext = ".jpg"
-        end if
-        ' use ext and exif check to catch false png
-        if instr(1, buffer, "‰PNG") > 0 and instr(1, buffer, "Exif") = 0 and ext = "" then
-            ' override end png if tag is present
-            if instr(1, buffer, "IEND") > 0 then
-                bend = instr(1, mid(buffer, instr(1, buffer, "‰PNG")), "IEND") + 7
-            end if
-            chunk = mid(buffer, instr(buffer, "‰PNG"), bend)
-            ext = ".png"
-        end if
-        ' funky variant for non jfif and jpegs video encoding?
-        if (instr(1, buffer, "Lavc58") > 0 or instr(1, buffer, "Exif") > 0) and ext = "" then
-            ' override end jpg if marker FFD9 is present
-            if instr(buffer, CHR(&hFF, &hD9)) > 0 then
-                bend = instr(1, mid(buffer, instr(1, buffer, "Exif")), CHR(&hFF, &hD9)) + 7
-            end if
-            if instr(1, buffer, "Exif") > 0 then
-                chunk = mid(buffer, instr(buffer, "Exif") - 6, bend)
-            else
-                chunk = mid(buffer, instr(buffer, "Lavc58") - 6, bend)
-            end if
-            ext = ".jpg"
-        end if
-        ' last resort just check on begin and end marker very tricky...
-        ' see https://stackoverflow.com/questions/4585527/detect-end-of-file-for-jpg-images#4614629
-        if instr(buffer, CHR(&hFF, &hD8)) > 0 and ext = ""then
-            chunk = mid(buffer, instr(1, buffer, CHR(&hFF, &hD8)), instr(1, buffer, CHR(&hFF, &hD9)))
-            ext = ".jpg"
-        end if
-        buffer = ""
-        Close #1
-        ' attempt to write thumbnail to temp file
-        if ext <> "" then
-            thumb = exepath + "\thumb" + ext
-            open thumb for Binary Access Write as #1
-                put #1, , chunk
-            close #1
-        else
-            ' no cover art in mp3 optional use folder.jpg if present as thumb
-        end if
-        return true
-    else
-        ' no cover art in mp3 optional use folder.jpg if present as thumb
-        logentry("notice", "no cover art found in: " + filename)
-        return false
-    end if
-end function
-
 if instr(command(1), ".pls") <> 0 then
     filename = command(1)
     Open filename For input As 1
     open "music.tmp" for output as 2
+    itemnr = 0
     Do Until EOF(1)
         Line Input #1, listitem
         ' ghetto parsing pls
         if instr(listitem, "=") > 0 then
-            'listitem = mid(listitem, instr(listitem, "=") + 1, len(listitem))
             select case true
                 case instr(listitem, "numberofentries") > 0
                     maxitems = val(mid(listitem, instr(listitem, "=") + 1, len(listitem)))
-                    'print maxitems
                 case instr(listitem, "file" + str(itemnr)) > 0
-                    'print "-file-" + mid(listitem, instr(listitem, "=") + 1, len(listitem))
                     print #2, mid(listitem, instr(listitem, "=") + 1, len(listitem))
                 case instr(listitem, "title" + str(itemnr)) > 0
-                    'print "-title-" + mid(listitem, instr(listitem, "=") + 1, len(listitem))
                 case instr(listitem, "length" + str(itemnr)) > 0
-                    'print "-length-" + mid(listitem, instr(listitem, "=") + 1, len(listitem))
                     listduration = listduration + val(mid(listitem, instr(listitem, "=") + 1, len(listitem)))
                     itemnr += 1
                 case len(listitem) = 0
@@ -372,10 +210,8 @@ if instr(command(1), ".m3u") <> 0 then
             select case true
                 case instr(listitem, "EXTINF:") > 0
                     listduration = listduration + val(mid(listitem, instr(listitem, ":") + 1, len(instr(listitem, ","))- 1))
-                    'print listduration
                     itemnr += 1
                 case instr(listitem, ".") > 0
-                    'print "-file-" + listitem
                     print #2, listitem
                 case len(listitem) = 0
                     'nop
@@ -390,41 +226,150 @@ end if
 
 ' listduration for recursive scan dir
 if maxitems > 1 and instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then
-    print "scanning folder for audiofiles and creating playlist..."
-    Dim As HSTREAM scanhandle = BASS_StreamCreateFile(0, StrPtr(fx1File), 0, 0, BASS_STREAM_PRESCAN)
-    dim tmp as integer
+    Dim scanhandle As HSTREAM
+    dim tmp        as integer
+    dim cnt        as integer = 1
     ' count items in list
-    itemlist = "music.tmp"
+    itemlist = exepath + "\music.tmp"
     tmp = readfromfile(itemlist)
+    cls
     Do Until EOF(tmp)
+        Locate 1, 1   
+        print "scanning folder for audiofiles and creating playlist..."
         Line Input #tmp, listitem
-        scanhandle = BASS_StreamCreateFile(0, StrPtr(listitem), 0, 0, BASS_STREAM_PRESCAN)
+        scanhandle = BASS_StreamCreateFile(0, StrPtr(listitem), 0, 0, BASS_STREAM_DECODE)
         ' length in bytes
         chanlengthbytes = BASS_ChannelGetLength(scanhandle, BASS_POS_BYTE)
         ' convert bytes to seconds
         tracklength = BASS_ChannelBytes2Seconds(scanhandle, chanlengthbytes)
-        'itemnr += 1
         listduration = listduration + tracklength
+        print cnt
+        cnt += 1
         BASS_StreamFree(scanhandle)    
     Loop
     close(tmp)
 end if
 
-' used for ascii interface
-Dim currentLine     As Integer = CsrLin
+' set os fader volume app channel
+function setvolumeosmixer(volume as ulong) as boolean
+
+    Dim hMixer      As HMIXER
+    Dim mxlc        As MIXERLINECONTROLS
+    Dim mxcd        As MIXERCONTROLDETAILS
+    Dim mxcd_vol    As MIXERCONTROLDETAILS_UNSIGNED
+    Dim mxl         As MIXERLINE
+    Dim mxlc_vol    As MIXERCONTROL
+
+    ' Open the mixer
+    mixerOpen(@hMixer, 0, 0, 0, 0)
+
+    '  get volume control for app channel
+    mxlc.cbStruct       = SizeOf(MIXERLINECONTROLS)
+    mxlc.dwControlType  = MIXERCONTROL_CONTROLTYPE_VOLUME
+    mxlc.cControls      = 1
+    mxlc.cbmxctrl       = SizeOf(MIXERCONTROL)
+    mxlc.pamxctrl       = @mxlc_vol
+    mixerGetLineControls(hMixer, @mxlc, MIXER_GETLINECONTROLSF_ONEBYTYPE)
+
+    ' get fader volume app channel
+    mxcd.cbStruct = SizeOf(MIXERCONTROLDETAILS)
+    mxcd.dwControlID    = mxlc_vol.dwControlID
+    mxcd.cChannels      = 1
+    mxcd.cMultipleItems = 0
+    mxcd.cbDetails      = SizeOf(MIXERCONTROLDETAILS_UNSIGNED)
+    mxcd.paDetails      = @mxcd_vol
+    mixerGetControlDetails(hMixer, @mxcd, MIXER_GETCONTROLDETAILSF_VALUE)
+
+    ' set fader volume app channel
+    mxcd_vol.dwValue = volume
+    mxcd.hwndOwner = 0
+    mixerSetControlDetails(hMixer, @mxcd, MIXER_SETCONTROLDETAILSF_VALUE)
+
+    ' close the mixer
+    mixerClose(hMixer)
+    return true
+
+end function
+
+' get os fader volume app channel
+function getvolumeosmixer() as ulong
+
+    Dim hMixer      As HMIXER
+    Dim mxlc        As MIXERLINECONTROLS
+    Dim mxcd        As MIXERCONTROLDETAILS
+    Dim mxcd_vol    As MIXERCONTROLDETAILS_UNSIGNED
+    Dim mxl         As MIXERLINE
+    Dim mxlc_vol    As MIXERCONTROL
+
+    ' Open the mixer
+    mixerOpen(@hMixer, 0, 0, 0, 0)
+
+    '  get volume control for app channel
+    mxlc.cbStruct       = SizeOf(MIXERLINECONTROLS)
+    mxlc.dwControlType  = MIXERCONTROL_CONTROLTYPE_VOLUME
+    mxlc.cControls      = 1
+    mxlc.cbmxctrl       = SizeOf(MIXERCONTROL)
+    mxlc.pamxctrl       = @mxlc_vol
+    mixerGetLineControls(hMixer, @mxlc, MIXER_GETLINECONTROLSF_ONEBYTYPE)
+
+    ' get fader volume app channel
+    mxcd.cbStruct       = SizeOf(MIXERCONTROLDETAILS)
+    mxcd.dwControlID    = mxlc_vol.dwControlID
+    mxcd.cChannels      = 1
+    mxcd.cMultipleItems = 0
+    mxcd.cbDetails      = SizeOf(MIXERCONTROLDETAILS_UNSIGNED)
+    mxcd.paDetails      = @mxcd_vol
+    mixerGetControlDetails(hMixer, @mxcd, MIXER_GETCONTROLDETAILSF_VALUE)
+
+    ' close the mixer
+    mixerClose(hMixer)
+    
+    ' return volume app channel
+    return mxcd_vol.dwValue
+
+end function
+
+' convert os fader volume app channel
+' scale from 0 ~ 65535 to 0 ~ 100 (windows mixer)
+function displayvolumeosmixer(volume as ulong) as integer
+    volume = volume / (65535 * 0.01)
+    return int(volume)
+end function
+
 ' init playback
 dim refreshinfo     as boolean = true
 dim taginfo(1 to 5) as string
 dim firstmp3        as integer = 1
+dim musiclevel      as single
+dim sleeplength     as integer = 1000
+
 getmp3cover(filename)
-BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, currentvolume) 
+BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume)
+currentvolume = getvolumeosmixer() 
 cls
 
 Do
 	Dim As String key = UCase(Inkey)
+    sleeplength = 25
+
+    ' ghetto attempt of dynamic range compression audio
+    if drc = "true" and BASS_ChannelIsActive(fx1Handle) = 1 then
+        musiclevel = BASS_ChannelGetLevel(fx1Handle)
+        ' low amplification
+        'drcvolume = 2.0f * sourcevolume - min(-2.0f * sourcevolume, log(max(loWORD(musiclevel), HIWORD(musiclevel)) * 0.0000225f) / log(20))
+        ' best for now    
+        drcvolume = max(sourcevolume, min(5.0f, 2.0f * sourcevolume - min(-2.0f * sourcevolume, max(-90.0f, log(max(loWORD(musiclevel), HIWORD(musiclevel)) * 0.0000225f)) / log(4.0f))))
+        ' volume oscilates noticable
+        'drcvolume = 2.0f * sourcevolume - _
+        '            min(-2.0f * sourcevolume, log(max(loWORD(musiclevel), HIWORD(musiclevel)) * 0.0000225f) / _
+        '            log(4.0f * (max(loWORD(musiclevel), HIWORD(musiclevel))) / 1000.0f))
+        BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, drcvolume)
+    else
+        BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume) 
+    end if
 
 	Select Case key
-        Case " "
+        Case Chr$(32)
             ' toggle mp3 mute status
             If musicstate Then
                 BASS_ChannelPause(fx1Handle)
@@ -440,7 +385,6 @@ Do
             filename = listplay(playtype, "music")
             getmp3cover(filename)
             fx1Handle = BASS_StreamCreateFile(0, StrPtr(filename), 0, 0, BASS_STREAM_PRESCAN)
-            BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, currentvolume) 
             BASS_ChannelPlay(fx1Handle, 0)
             erase taginfo 
             refreshinfo = true
@@ -452,7 +396,6 @@ Do
             filename = listplay("linearmin", "music")
             getmp3cover(filename)
             fx1Handle = BASS_StreamCreateFile(0, StrPtr(filename), 0, 0, BASS_STREAM_PRESCAN)
-            BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, currentvolume) 
             BASS_ChannelPlay(fx1Handle, 0)
             erase taginfo 
             refreshinfo = true
@@ -474,20 +417,39 @@ Do
         Case "R"
             ' restart mp3
             BASS_ChannelPlay(fx1Handle, 1)
+        Case "L"
+            ' change list playtype
+            select case playtype
+                case "linear"
+                    playtype = "shuffle"
+                case "shuffle"
+                    playtype = "linear"
+            end select
+        Case "D"
+            ' toggle drc
+            select case drc
+                case "true"
+                    drc = "false"
+                    drcvolume = sourcevolume
+                case "false"
+                    drc = "true"
+            end select
         Case "-"
-            ' decrease mp3 volume (in range [0.0, 1.0])
-            if currentvolume > 0.10 and currentvolume < 2.20 then
-                currentvolume = currentvolume - 0.10
-                BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, currentvolume) 
-            end if
+            ' decrease fader mixer os volume (in range 0 - 65535)
+            currentvolume = currentvolume - 1000
+            if currentvolume < 1001 then currentvolume = 0 end if
+            setvolumeosmixer(currentvolume)
         Case "+"
-            ' increase mp3 volume (in range [0.0, 1.0])
-            if currentvolume > 0 and currentvolume < 2.10 then
-                currentvolume = currentvolume + 0.10
-                BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, currentvolume) 
-            END IF
+            ' increase fader mixer os volume (in range 0 - 65535)
+            currentvolume = currentvolume + 1000
+            if currentvolume > 65535 then currentvolume = 65535 end if
+            setvolumeosmixer(currentvolume)
         Case Chr(27)
             Exit Do
+        case else
+            ' detect volume change via os mixer
+            currentvolume = getvolumeosmixer()
+            sleeplength = 1000
 	End Select
 
     ' auto play next mp3 from list if applicable
@@ -498,7 +460,6 @@ Do
             filename = listplay(playtype, "music")
             getmp3cover(filename)
             fx1Handle = BASS_StreamCreateFile(0, StrPtr(filename), 0, 0, BASS_STREAM_PRESCAN)
-            BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, currentvolume) 
             BASS_ChannelPlay(fx1Handle, 0)
             refreshinfo = true
             cls
@@ -510,6 +471,7 @@ Do
         firstmp3 = 0
         musicstate = true
     end if
+
     ' mp3 play time elapsed
     secondsPosition = BASS_ChannelBytes2Seconds(fx1Handle, BASS_ChannelGetPosition(fx1Handle, BASS_POS_BYTE))
     ' length in bytes
@@ -518,15 +480,18 @@ Do
     tracklength = BASS_ChannelBytes2Seconds(fx1Handle, chanlengthbytes)
 
     ' ascii interface
-    Locate currentLine, 1
+    Locate 1, 1
     ' basic interaction
-    Print "======= > BASS library demonstration < ========"
+    Print "| BASS library demonstration v" + exeversion
+    PRINT
     Print "press .     to play next"
     Print "press ,     to play previous"
     Print "press ]     to skip forward   10 secs"
     Print "press [     to skip backwards 10 secs"
     Print "press space to pause / play or mute / unmute"
     Print "press r     to restart"
+    Print "press l     for linear / shuffle list play"
+    Print "press d     for dynamic range compression"
     Print "press -     to increase volume"
     Print "press +     to decrease volume"
     Print "press esc   to quit"
@@ -551,16 +516,21 @@ Do
     else    
         print "current:  " + mid(left(filename, len(filename) - instr(filename, "\") -1), InStrRev(filename, "\") + 1, len(filename))
     end if
-    print "duration: " & compoundtime(tracklength) & " / " & compoundtime(CInt(secondsPosition)) 
+    print "duration: " & compoundtime(tracklength) & " / " & compoundtime(CInt(secondsPosition)) & "           " 
     ' song list info
-    print "list:     " & maxitems & " / " & compoundtime(listduration)
+    print "list:     " & maxitems & " / " & compoundtime(listduration) & " " & playtype + "  "
     print "file:     " + filename
     if musicstate = false then
-        print using "volume:    mute";
+        print "volume:   mute  "
     else
-        print using "volume:   #.###"; currentvolume
+        print using "volume:   &###-"; displayvolumeosmixer(currentvolume);
+        print "    "
     end if
-	Sleep(30)
+    print using "drc:      #.###"; drcvolume;
+    print "  " & drc & "       "
+
+    Sleep(sleeplength)
+
 Loop
 
 cleanup:

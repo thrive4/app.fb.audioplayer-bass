@@ -1,0 +1,20 @@
+update v1.2 15/05/2023
+- added drc, dynamic range compression can be set via conf.ini
+- added toggle drc via key 'd' drc on or off
+- added toggle listplay via key 'l' shuffle or linear
+- added os mixer fader volume control (windows 7 and 10)
+| route: sourcevolume > drcvolume (on / off) > currentvolume( is os mixer volume)
+| source is set via config, drc amps <n>Db currentvolume is final volume output
+- improved command line handling catches incorrect files and paths
+- tweaked utilfile.bas more in line with other apps
+- tweaked shuffleplay scanning from root dir is not supported
+- tieded up code in most files
+- fixed .pls
+
+update v1.1 20/03/2023
+- better thumbnail detection in jpeg
+  pattern ffd8 ffd8 ffd9 ffd9 next to
+  pattern ffd8 ffd9 ffd8 ffd9
+- better png check using exif as check
+- removed p play option not really needed
+- misc bugfixes stability and error handling

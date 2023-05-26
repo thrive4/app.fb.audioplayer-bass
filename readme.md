@@ -8,6 +8,8 @@ basic config options in conf.ini\
 locale          = <en or de>\
 defaultvolume   = <0.0 .. 1.0>\
 playtype        = <shuffle, linear>\
+' dynamic range compression\
+drc             = <true, false>\
 \
 basic help localization via:\
 help-de.ini\
@@ -37,6 +39,8 @@ press ]     to skip forward   10 secs\
 press [     to skip backwards 10 secs\
 press space to pause / play or mute / unmute\
 press r     to restart\
+press l     for linear / shuffle list play\
+press d     for dynamic range compression\
 press -     to increase volume\
 press +     to decrease volume\
 press esc   to quit\
