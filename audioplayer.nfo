@@ -1,3 +1,7 @@
+update v1.3 27/06/2023
+- reworked localization, broader ui scope, utf support and more scalable
+- implemented utilfile.bas generics for several apps
+
 update v1.2 15/05/2023
 - added drc, dynamic range compression can be set via conf.ini
 - added toggle drc via key 'd' drc on or off
