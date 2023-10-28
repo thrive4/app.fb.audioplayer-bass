@@ -94,23 +94,20 @@ end if
 if instr(command(1), ".") <> 0 then
     fileext = lcase(mid(command(1), instrrev(command(1), ".")))
     if instr(1, filetypes, fileext) = 0 and instr(1, ".m3u, .pls", fileext) = 0 then
-        print command(1) + " file type not supported"
-        end
+        logentry("fatal", command(1) + " file type not supported")
     end if
     if FileExists(exepath + "\" + command(1)) = false then
         if FileExists(imagefolder) then
             'nop
         else
-            print imagefolder + " does not excist or is incorrect"
-            end
+            logentry("fatal", imagefolder + " does not excist or is incorrect")
         end if
     else
         imagefolder = exepath + "\" + command(1)
     end if
 else
     if checkpath(imagefolder) = false then
-        print imagefolder + " does not excist or is incorrect"
-        end
+        logentry("fatal", imagefolder + " does not excist or is incorrect")
     end if
 end if
 if instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then
@@ -121,17 +118,18 @@ end if
 if instr(command(1), ".") <> 0 and instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then
     filename = imagefolder
     imagefolder = left(command(1), instrrev(command(1), "\") - 1)
-    chk = createlist(imagefolder, filetypes, "music")
+    maxitems = createlist(imagefolder, filetypes, "music")
+    currentsong = setcurrentlistitem("music", command(1))
 end if    
 
 ' Find out which version of BASS is present.
 If (HiWord(BASS_GetVersion()) <> BASSVERSION) Then
-	logentry("terminate", "A wrong version of the BASS library has been found!")
+	logentry("fatal", "A wrong version of the BASS library has been found!")
 End If
 
 ' Initialize BASS using the default device at 44.1 KHz.
 If (BASS_Init(-1, 44100, 0, 0, 0) = FALSE) Then
-	logentry("terminate", "Could not initialize audio! BASS returned error " & BASS_ErrorGetCode())
+	logentry("fatal", "Could not initialize audio! BASS returned error " & BASS_ErrorGetCode())
 End If
 
 ' prime mp3
@@ -506,9 +504,9 @@ Do
     getuilabelvalue("genre" , taginfo(5))
     Print
     if taginfo(1) <> "----" and taginfo(2) <> "----" then
-        getuilabelvalue("current", taginfo(1) + " - " + taginfo(2))
+        getuilabelvalue("current", currentsong & ". " & taginfo(1) + " - " + taginfo(2))
     else    
-        getuilabelvalue("current", mid(left(filename, len(filename) - instr(filename, "\") -1), InStrRev(filename, "\") + 1, len(filename)))
+        getuilabelvalue("current", currentsong & ". " & mid(left(filename, len(filename) - instr(filename, "\") -1), InStrRev(filename, "\") + 1, len(filename)))
     end if
     getuilabelvalue("duration", compoundtime(tracklength) & " / " & compoundtime(CInt(secondsPosition)) & "           ")
     ' song list info

@@ -5,7 +5,7 @@ supported playlists .m3u, .pls\
 ascii interface\
 \
 basic config options in conf.ini\
-locale          = <en or de>\
+locale          = <en, de>\
 defaultvolume   = <0.0 .. 1.0>\
 playtype        = <shuffle, linear>\
 ' dynamic range compression\
@@ -17,7 +17,7 @@ help-en.ini\
 \
 if present coverart will be extracted and written to file as thumb.jpg\
 When a file or path is specified the current dir and sub dir(s)\
-will be scanned for audio file(s) which will generate an internal playlist\
+will be scanned for audio file(s) which will generate an internal playlist
 ## usage
 audioplayer.exe "path to file or folder"\
 if a file or path is specified the folder will be scanned for an audio file\
@@ -43,7 +43,7 @@ press l     for linear / shuffle list play\
 press d     for dynamic range compression\
 press -     to increase volume\
 press +     to decrease volume\
-press esc   to quit\
+press esc   to quit
 # special thanks to
 squall4226 for getmp3tag\
 see https://www.freebasic.net/forum/viewtopic.php?p=149207&hilit=user+need+TALB+for+album#p149207
