@@ -18,7 +18,7 @@ dim chanlengthbytes as QWORD
 dim tracklength     as double
 Dim musicstate      As boolean
 Dim currentvolume   as ulong
-dim sourcevolume    as single = 0.3f
+dim sourcevolume    as single = 0.33f
 dim drcvolume       as single = 0.0f
 dim drc             as string = "true"
 
@@ -43,7 +43,7 @@ dim itm     as string
 dim inikey  as string
 dim inival  as string
 dim inifile as string = exepath + "\conf\conf.ini"
-dim f       as integer
+dim f       as long
 if FileExists(inifile) = false then
     logentry("error", inifile + " file does not excist")
 else 
@@ -83,6 +83,7 @@ select case command(1)
         ' cleanup listplay files
         delfile(exepath + "\" + "music" + ".tmp")
         delfile(exepath + "\" + "music" + ".lst")
+        delfile(exepath + "\" + "music" + ".swp")
         logentry("terminate", "normal termination " + appname)
 end select
 
@@ -134,7 +135,7 @@ End If
 
 ' prime mp3
 Dim As String fx1File = filename
-Dim As HSTREAM fx1Handle = BASS_StreamCreateFile(0, StrPtr(fx1File), 0, 0, BASS_STREAM_PRESCAN)
+Dim As HSTREAM fx1Handle = BASS_StreamCreateFile(0, StrPtr(fx1File), 0, 0, BASS_STREAM_PRESCAN or BASS_SAMPLE_FLOAT)
 
 ' compound seconds to hours, minutes, etc 
 function compoundtime(m As Long) as string
@@ -225,7 +226,7 @@ end if
 ' listduration for recursive scan dir
 if maxitems > 1 and instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then
     Dim scanhandle As HSTREAM
-    dim tmp        as integer
+    dim tmp        as long
     dim cnt        as integer = 1
     ' count items in list
     itemlist = exepath + "\music.tmp"
@@ -339,8 +340,8 @@ dim refreshinfo     as boolean = true
 dim taginfo(1 to 5) as string
 dim firstmp3        as integer = 1
 dim musiclevel      as single
+dim maxlevel        as single
 dim sleeplength     as integer = 1000
-
 readuilabel(exepath + "\conf\" + locale + "\menu.ini")
 getmp3cover(filename)
 BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume)
@@ -354,7 +355,11 @@ Do
     ' ghetto attempt of dynamic range compression audio
     if drc = "true" and BASS_ChannelIsActive(fx1Handle) = 1 then
         musiclevel = BASS_ChannelGetLevel(fx1Handle)
-        drcvolume = 2.0f - max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768
+        'maxlevel = max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
+        'drcvolume = (1.5f + (1.5f - maxlevel)) - maxlevel
+        maxlevel = min(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
+        drcvolume = ((1.0f + (4.75f - maxlevel)) - maxlevel) * sourcevolume
+        'drcvolume = 2.0f - max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768
         BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, drcvolume)
     else
         BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume) 
@@ -528,6 +533,7 @@ cleanup:
 ' cleanup listplay files
 delfile(exepath + "\" + "music" + ".tmp")
 delfile(exepath + "\" + "music" + ".lst")
+delfile(exepath + "\" + "music" + ".swp")
 delfile(exepath + "\thumb.jpg")
 delfile(exepath + "\thumb.png")
 
