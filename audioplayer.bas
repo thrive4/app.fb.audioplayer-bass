@@ -134,9 +134,10 @@ if instr(command(1), ":") <> 0 and len(command(2)) <> 0 then
         case else
             logentry("fatal", "unknown tag '" & command(2) & "' valid tags artist, title, album, genre and year")
     end select
-
+    ' scan and search nr results overwritten by getmp3playlist
     maxitems = exportm3u(command(1), "*.mp3", "m3u", "exif", command(2), command(3))
-    filename = getmp3playlist(exepath + "\" + command(3) + ".m3u")
+    maxitems = getmp3playlist(exepath + "\" + command(3) + ".m3u")
+    filename = listplay(playtype, "music")
     currentsong = setcurrentlistitem("music", filename)
     if currentsong = 1 then
         logentry("fatal", "no matches found for " + command(3) + " in " + command(2))
@@ -144,46 +145,8 @@ if instr(command(1), ":") <> 0 and len(command(2)) <> 0 then
 end if
 
 if instr(command(1), ".pls") <> 0 or instr(command(1), ".m3u") <> 0 then
-    filename = command(1)
-    Open filename For input As 1
-    open exepath + "\music.tmp" for output as 2
-    itemnr = 0
-    Do Until EOF(1)
-        Line Input #1, listitem
-        ' ghetto parsing pls
-        if instr(listitem, "=") > 0 and instr(command(1), ".pls") <> 0 then
-            select case true
-                case instr(listitem, "file") > 0
-                    print #2, mid(listitem, instr(listitem, "=") + 1, len(listitem))
-                case instr(listitem, "title") > 0
-                case instr(listitem, "length") > 0
-                    listduration = listduration + val(mid(listitem, instr(listitem, "=") + 1, len(listitem)))
-                    itemnr += 1
-                case len(listitem) = 0
-                    'nop
-                case else
-                    'msg64 = msg64 + listitem
-            end select
-        end if
-        ' ghetto parsing m3u
-        if len(listitem) > 0 and instr(command(1), ".m3u") <> 0 then
-            select case true
-                case instr(listitem, "EXTINF:") > 0
-                    listduration = listduration + val(mid(listitem, instr(listitem, ":") + 1, len(instr(listitem, ","))- 1))
-                    itemnr += 1
-                case instr(listitem, ".") > 0
-                    print #2, listitem
-                case len(listitem) = 0
-                    'nop
-                case else
-                    'msg64 = msg64 + listitem
-            end select
-        end if
-    Loop
-    maxitems = itemnr
-    close
-    filename = getmp3playlist(command(1))
-    currentsong = setcurrentlistitem("music", filename)
+    maxitems = getmp3playlist(command(1))
+    filename = listplay(playtype, "music")
     logentry("notice", "parsing and playing plylist " + filename)
 end if
 
@@ -234,14 +197,14 @@ function compoundtime(m As Long) as string
 End function
 
 ' listduration for recursive scan dir
-if maxitems > 1 and instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then
+if maxitems > 1 then
     Dim scanhandle As HSTREAM
     dim tmp        as long
     dim cnt        as integer = 1
-    ' count items in list
     itemlist = exepath + "\music.tmp"
     tmp = readfromfile(itemlist)
     cls
+    ' count items in list and tally duration songs
     Do Until EOF(tmp)
         Locate 1, 1   
         print "scanning folder for audiofiles and creating playlist..."
