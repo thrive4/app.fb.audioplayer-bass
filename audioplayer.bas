@@ -7,6 +7,7 @@
 #include once "windows.bi"
 #Include once "win/mmsystem.bi"
 #include once "utilfile.bas"
+#include once "utilaudio.bas"
 #include once "shuffleplay.bas"
 #cmdline "app.rc"
 
@@ -21,6 +22,8 @@ Dim currentvolume   as ulong
 dim sourcevolume    as single = 0.33f
 dim drcvolume       as single = 0.0f
 dim drc             as string = "true"
+dim locale          as string = "en"
+dim dummy           as string
 
 ' setup parsing pls and m3u
 dim chkcontenttype  as boolean = false
@@ -37,6 +40,17 @@ dim imagefolder as string
 dim filetypes   as string = ".mp3, .mp4, .ogg, .wav"
 ' options shuffle, linear
 dim playtype    as string = "linear"
+
+' setup bass
+Dim As String fx1File
+Dim As HSTREAM fx1Handle
+If (HiWord(BASS_GetVersion()) <> BASSVERSION) Then
+	logentry("fatal", "A wrong version of the BASS library has been found!")
+End If
+' Initialize BASS using the default device at 44.1 KHz.
+If (BASS_Init(-1, 44100, 0, 0, 0) = FALSE) Then
+	logentry("fatal", "Could not initialize audio! BASS returned error " & BASS_ErrorGetCode())
+End If
 
 ' init app with config file if present conf.ini
 dim itm     as string
@@ -76,55 +90,79 @@ else
 end if
 drcvolume = sourcevolume
 
-' parse commandline for options overides conf.ini settings
+' verify locale otherwise set default
+select case locale
+    case "en", "es", "de", "fr", "nl"
+        ' nop
+    case else
+        logentry("error", "unsupported locale " + locale + " applying default setting")
+        locale = "en"
+end select
+
+' parse commandline
 select case command(1)
-    case "/?", "-man", ""
+    case "/?", "-h", "-help", "-man", ""
         displayhelp(locale)
-        ' cleanup listplay files
-        delfile(exepath + "\" + "music" + ".tmp")
-        delfile(exepath + "\" + "music" + ".lst")
-        delfile(exepath + "\" + "music" + ".swp")
-        logentry("terminate", "normal termination " + appname)
+        goto cleanup
+    case "-v", "-ver"
+        print appname + " version " & exeversion
+        goto cleanup
 end select
 
 ' get media
-imagefolder = command(1)
-if imagefolder = "" then
-    imagefolder = exepath
-end if
-if instr(command(1), ".") <> 0 then
-    fileext = lcase(mid(command(1), instrrev(command(1), ".")))
-    if instr(1, filetypes, fileext) = 0 and instr(1, ".m3u, .pls", fileext) = 0 then
-        logentry("fatal", command(1) + " file type not supported")
-    end if
-    if FileExists(exepath + "\" + command(1)) = false then
-        if FileExists(imagefolder) then
-            'nop
-        else
-            logentry("fatal", imagefolder + " does not excist or is incorrect")
+dummy = resolvepath(command(1))
+if instr(dummy, ".m3u") = 0 and instr(dummy, ".pls") = 0 then
+    if instr(dummy, ".") <> 0 and instr(dummy, "..") = 0  then
+        fileext = lcase(mid(dummy, instrrev(dummy, ".")))
+        if instr(1, filetypes, fileext) = 0 then
+            logentry("fatal", dummy + " file type not supported")
         end if
+        imagefolder = left(dummy, instrrev(dummy, "\") - 1)
+        chk = createlist(imagefolder, filetypes, "music")
+        currentimage = setcurrentlistitem("music", dummy)
     else
-        imagefolder = exepath + "\" + command(1)
+        ' specific path
+        if instr(dummy, "\") <> 0  then
+            imagefolder = dummy
+            if checkpath(imagefolder) = false then
+                logentry("fatal",  "error: path not found " + imagefolder)
+            else
+                chk = createlist(imagefolder, filetypes, "music")
+                if chk = false then
+                    logentry("fatal", "error: no playable files found")
+                end if
+                filename = listplay(playtype, "music")
+            end if
+        ELSE
+            ' fall back to path imagefolder specified in conf.ini
+            if checkpath(imagefolder) = false then
+                logentry("warning", "error: path not found " + imagefolder)
+                ' try scanning exe path
+                imagefolder = exepath
+            end if
+            chk = createlist(imagefolder, filetypes, "music")
+            if chk = false then
+                logentry("fatal", "error: no playable files found")
+            end if
+            filename = listplay(playtype, "music")
+        end if
     end if
-else
-    if checkpath(imagefolder) = false then
-        logentry("fatal", imagefolder + " does not excist or is incorrect")
-    end if
-end if
-if instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 and len(command(2)) = 0 then
-    maxitems = createlist(imagefolder, filetypes, "music")
-    filename = listplay(playtype, "music")
 end if
 
-if instr(command(1), ".") <> 0 and instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then
-    filename = imagefolder
-    imagefolder = left(command(1), instrrev(command(1), "\") - 1)
-    maxitems = createlist(imagefolder, filetypes, "music")
-    currentsong = setcurrentlistitem("music", command(1))
+' use .m3u or .pls
+if instr(dummy, ".m3u") <> 0 or instr(dummy, ".pls") <> 0 then
+    if FileExists(dummy) then
+        'nop
+    else
+        logentry("fatal", dummy + " file does not excist or possibly use full path to file")
+    end if
+    maxitems = getmp3playlist(dummy, "music")
+    filename = listplay(playtype, "music")
+    logentry("notice", "parsing and playing playlist " + filename)
 end if
-    
+
 ' search with query and export .m3u 
-if instr(command(1), ":") <> 0 and len(command(2)) <> 0 then
+if instr(dummy, ":") <> 0 and len(command(2)) <> 0  then
     select case command(2)
         case "artist"
         case "title"
@@ -132,37 +170,25 @@ if instr(command(1), ":") <> 0 and len(command(2)) <> 0 then
         case "year"
         case "genre"
         case else
+            delfile(exepath + "\" + "music" + ".tmp")
+            delfile(exepath + "\" + "music" + ".lst")
+            delfile(exepath + "\" + "music" + ".swp")
             logentry("fatal", "unknown tag '" & command(2) & "' valid tags artist, title, album, genre and year")
     end select
     ' scan and search nr results overwritten by getmp3playlist
-    maxitems = exportm3u(command(1), "*.mp3", "m3u", "exif", command(2), command(3))
-    maxitems = getmp3playlist(exepath + "\" + command(3) + ".m3u")
+    maxitems = exportm3u(dummy, "*.mp3", "m3u", "exif", command(2), command(3))
+    maxitems = getmp3playlist(exepath + "\" + command(3) + ".m3u", "music")
     filename = listplay(playtype, "music")
     currentsong = setcurrentlistitem("music", filename)
     if currentsong = 1 then
         logentry("fatal", "no matches found for " + command(3) + " in " + command(2))
     end if
 end if
-
-if instr(command(1), ".pls") <> 0 or instr(command(1), ".m3u") <> 0 then
-    maxitems = getmp3playlist(command(1))
-    filename = listplay(playtype, "music")
-    logentry("notice", "parsing and playing plylist " + filename)
-end if
-
-' Find out which version of BASS is present.
-If (HiWord(BASS_GetVersion()) <> BASSVERSION) Then
-	logentry("fatal", "A wrong version of the BASS library has been found!")
-End If
-
-' Initialize BASS using the default device at 44.1 KHz.
-If (BASS_Init(-1, 44100, 0, 0, 0) = FALSE) Then
-	logentry("fatal", "Could not initialize audio! BASS returned error " & BASS_ErrorGetCode())
-End If
+dummy = ""
 
 ' prime mp3
-Dim As String fx1File = filename
-Dim As HSTREAM fx1Handle = BASS_StreamCreateFile(0, StrPtr(fx1File), 0, 0, BASS_STREAM_PRESCAN or BASS_SAMPLE_FLOAT)
+fx1File = filename
+fx1Handle = BASS_StreamCreateFile(0, StrPtr(fx1File), 0, 0, BASS_STREAM_PRESCAN or BASS_SAMPLE_FLOAT)
 
 ' compound seconds to hours, minutes, etc 
 function compoundtime(m As Long) as string
@@ -197,10 +223,11 @@ function compoundtime(m As Long) as string
 End function
 
 ' listduration for recursive scan dir
-if maxitems > 1 then
+if maxitems > 1 or (instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0) then
     Dim scanhandle As HSTREAM
     dim tmp        as long
     dim cnt        as integer = 1
+    maxitems = 1
     itemlist = exepath + "\music.tmp"
     tmp = readfromfile(itemlist)
     cls
@@ -217,6 +244,7 @@ if maxitems > 1 then
         listduration = listduration + tracklength
         print cnt
         cnt += 1
+        maxitems += 1
         BASS_StreamFree(scanhandle)    
     Loop
     close(tmp)
@@ -310,11 +338,11 @@ end function
 
 ' init playback
 dim refreshinfo     as boolean = true
-'dim taginfo(1 to 5) as string
 dim firstmp3        as integer = 1
 dim musiclevel      as single
 dim maxlevel        as single
-dim sleeplength     as integer = 1000
+dim minlevel        as single
+dim sleeplength     as long = 1000
 readuilabel(exepath + "\conf\" + locale + "\menu.ini")
 getmp3cover(filename)
 BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume)
@@ -323,16 +351,15 @@ cls
 
 Do
 	Dim As String key = UCase(Inkey)
-    sleeplength = 25
+    sleeplength = 5
 
     ' ghetto attempt of dynamic range compression audio
-    if drc = "true" and BASS_ChannelIsActive(fx1Handle) = 1 then
-        musiclevel = BASS_ChannelGetLevel(fx1Handle)
-        'maxlevel = max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
-        'drcvolume = (1.5f + (1.5f - maxlevel)) - maxlevel
-        maxlevel = min(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
-        drcvolume = ((1.0f + (4.75f - maxlevel)) - maxlevel) * sourcevolume
-        'drcvolume = 2.0f - max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768
+    if drc = "true" then
+        musiclevel      = BASS_ChannelGetLevel(fx1Handle)
+        minlevel        = min(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
+        maxlevel        = max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
+        drcvolume       = min(1.75f + (7.0f - maxlevel), max(0.0f, (1.55f - minlevel)) * (7.0f - maxlevel))
+        drcvolume       = drcvolume * sourcevolume
         BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, drcvolume)
     else
         BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume) 
@@ -451,7 +478,6 @@ Do
 
     ' ascii interface
     Locate 1, 1
-    ' basic interaction
     Print "| BASS library demonstration v" + exeversion
     PRINT
     getuilabelvalue("next")

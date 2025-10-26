@@ -1,3 +1,17 @@
+update v1.8 16/10/2025
+- tweaked drc again was still choppy with certain
+  music bit smoother now less clipping of audio
+  and softer audio is amplified a bit more.
+- fix resolvepath handling of ..\<path>\<file>
+- fix to commandline handling resolvepath after switches -v, etc
+- fixed error handling locale
+- regression checkpath (see 1.2) fixed again
+- slimmed down function explode
+- re-orded declaration variables caused issue with goto
+- update generic file functions added drive label and storage
+  and convertbytesize
+- added spanish
+
 update v1.7 08/10/2024
 - fixed .pls and .mru parsing again...
   a music.lst was not generated

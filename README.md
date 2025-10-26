@@ -1,4 +1,4 @@
-## audioplayer (bass)
+## audioplayer (bass) [![Github All Releases](https://img.shields.io/github/downloads/thrive4/app.fb.audioplayer-bass/total.svg)]()
 basic audioplayer written in freebasic and bass
 * supported audio types .mp3, .mp4, .ogg, .wav
 * supported playlists .m3u, .pls
@@ -20,9 +20,12 @@ which then can be played by audioplayer.exe beethoven.m3u
 * runtime in seconds is not calculated default is #EXTINF:134
 * no explicit wildcard support, only searchs on one tag
 * supported tags artist, title, album, genre and year
+## install
+open zip file and copy contents to preferd folder
+this application is **portable**.
 ## configuration
 basic config options in conf.ini\
-locale          = <en, de, fr, nl>\
+locale          = <en, es, de, fr, nl>\
 defaultvolume   = <0.0 .. 1.0>\
 playtype        = <shuffle, linear>\
 ' dynamic range compression\
