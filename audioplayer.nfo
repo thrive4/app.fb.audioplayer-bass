@@ -1,3 +1,18 @@
+update v1.9 29/12/2025
+- major rewrite due to implementing new listplay
+  shuffleplay now superseded by listplay
+  better random shuffle plus has history that keeps
+  tab of previous random selected items
+- added internet radio icecast and shoutcast streams
+- updated bass.dll from v2.4.16.7 to v2.4.18.3
+- updated conf.ini to v1.1 removed screen settings
+  they are not used by app added default mediafolder
+  location audio files
+- fixed selecting single file via commandline
+  was not set as current in list
+- tweaked calculating list duration and localized it
+- harmonized help files and added switches
+
 update v1.8 16/10/2025
 - tweaked drc again was still choppy with certain
   music bit smoother now less clipping of audio

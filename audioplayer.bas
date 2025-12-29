@@ -7,12 +7,11 @@
 #include once "windows.bi"
 #Include once "win/mmsystem.bi"
 #include once "utilfile.bas"
+#include once "listplay.bas"
 #include once "utilaudio.bas"
-#include once "shuffleplay.bas"
 #cmdline "app.rc"
 
 ' setup playback
-dim filename        as string = "test.mp3"
 dim fileext         as string = ""
 Dim secondsPosition As Double
 dim chanlengthbytes as QWORD
@@ -23,31 +22,30 @@ dim sourcevolume    as single = 0.33f
 dim drcvolume       as single = 0.0f
 dim drc             as string = "true"
 dim locale          as string = "en"
-dim dummy           as string
+dim dummy           as string = ""
+dim shared as string filename
+filename            = ""
 
 ' setup parsing pls and m3u
 dim chkcontenttype  as boolean = false
-dim itemnr          as integer = 1
-dim listitem        as string
-dim maxitems        as integer
 dim listduration    as integer
-dim lengthm3u       as integer
-common shared currentitem as integer
 
 ' setup list of soundfiles
-dim itemlist    as string = appname
-dim imagefolder as string
-dim filetypes   as string = ".mp3, .mp4, .ogg, .wav"
+dim mediafolder  as string
+dim filetypes    as string = ".mp3, .mp4, .ogg, .wav"
 ' options shuffle, linear
-dim playtype    as string = "linear"
+dim playtype     as string = "linear"
+dim currentitem  as integer
+dim maxitemslist as integer
+dim listtype     as string = "music"
 
 ' setup bass
 Dim As String fx1File
-Dim As HSTREAM fx1Handle
+Dim shared As HSTREAM fx1Handle
 If (HiWord(BASS_GetVersion()) <> BASSVERSION) Then
 	logentry("fatal", "A wrong version of the BASS library has been found!")
 End If
-' Initialize BASS using the default device at 44.1 KHz.
+' initialize BASS using the default device at 44.1 KHz.
 If (BASS_Init(-1, 44100, 0, 0, 0) = FALSE) Then
 	logentry("fatal", "Could not initialize audio! BASS returned error " & BASS_ErrorGetCode())
 End If
@@ -64,7 +62,7 @@ else
     f = readfromfile(inifile)
     Do Until EOF(f)
         Line Input #f, itm
-        if instr(1, itm, "=") > 1 then
+        if instr(1, itm, "=") > 1 and Left(itm, 1) <> "'" then
             inikey = trim(mid(itm, 1, instr(1, itm, "=") - 2))
             inival = trim(mid(itm, instr(1, itm, "=") + 2, len(itm)))
             if inival <> "" then
@@ -77,6 +75,8 @@ else
                         usecons = inival
                     case "logtype"
                         logtype = inival
+                    case "mediafolder"
+                        mediafolder = inival
                     case "playtype"
                         playtype = inival
                     case "drc"
@@ -98,10 +98,11 @@ select case locale
         logentry("error", "unsupported locale " + locale + " applying default setting")
         locale = "en"
 end select
+readuilabel(exepath + "\conf\" + locale + "\menu.ini")
 
 ' parse commandline
 select case command(1)
-    case "/?", "-h", "-help", "-man", ""
+    case "/?", "-h", "-help", "--help", "-man"
         displayhelp(locale)
         goto cleanup
     case "-v", "-ver"
@@ -111,42 +112,42 @@ end select
 
 ' get media
 dummy = resolvepath(command(1))
-if instr(dummy, ".m3u") = 0 and instr(dummy, ".pls") = 0 then
-    if instr(dummy, ".") <> 0 and instr(dummy, "..") = 0  then
+if instr(dummy, ".m3u") = 0 and instr(dummy, ".pls") = 0 and instr(dummy, "http") = 0 then
+    if instr(dummy, ".") <> 0 and instr(dummy, "..") = 0 then
         fileext = lcase(mid(dummy, instrrev(dummy, ".")))
         if instr(1, filetypes, fileext) = 0 then
             logentry("fatal", dummy + " file type not supported")
         end if
-        imagefolder = left(dummy, instrrev(dummy, "\") - 1)
-        chk = createlist(imagefolder, filetypes, "music")
-        currentimage = setcurrentlistitem("music", dummy)
+        mediafolder = left(dummy, instrrev(dummy, "\"))
+        createlist(mediafolder, filetypes, listtype)
     else
         ' specific path
         if instr(dummy, "\") <> 0  then
-            imagefolder = dummy
-            if checkpath(imagefolder) = false then
-                logentry("fatal",  "error: path not found " + imagefolder)
+            mediafolder = dummy
+            if checkpath(mediafolder) = false then
+                logentry("fatal",  "error: path not found " + mediafolder)
             else
-                chk = createlist(imagefolder, filetypes, "music")
-                if chk = false then
+                if createlist(mediafolder, filetypes, listtype) = 0 then
                     logentry("fatal", "error: no playable files found")
                 end if
-                filename = listplay(playtype, "music")
             end if
         ELSE
-            ' fall back to path imagefolder specified in conf.ini
-            if checkpath(imagefolder) = false then
-                logentry("warning", "error: path not found " + imagefolder)
+            ' fall back to path mediafolder specified in conf.ini
+            if checkpath(mediafolder) = false then
+                logentry("error", "error: mediafolder path " + mediafolder + " not found in conf.ini ")
                 ' try scanning exe path
-                imagefolder = exepath
+                mediafolder = exepath
             end if
-            chk = createlist(imagefolder, filetypes, "music")
-            if chk = false then
+            if createlist(mediafolder, filetypes, listtype) = 0 then
                 logentry("fatal", "error: no playable files found")
             end if
-            filename = listplay(playtype, "music")
         end if
     end if
+end if
+
+' check for stream in command line
+if instr(dummy, "http") <> 0 then
+    filename = dummy
 end if
 
 ' use .m3u or .pls
@@ -156,8 +157,7 @@ if instr(dummy, ".m3u") <> 0 or instr(dummy, ".pls") <> 0 then
     else
         logentry("fatal", dummy + " file does not excist or possibly use full path to file")
     end if
-    maxitems = getmp3playlist(dummy, "music")
-    filename = listplay(playtype, "music")
+    listnr = getmp3playlist(dummy, listtype)
     logentry("notice", "parsing and playing playlist " + filename)
 end if
 
@@ -170,25 +170,17 @@ if instr(dummy, ":") <> 0 and len(command(2)) <> 0  then
         case "year"
         case "genre"
         case else
-            delfile(exepath + "\" + "music" + ".tmp")
-            delfile(exepath + "\" + "music" + ".lst")
-            delfile(exepath + "\" + "music" + ".swp")
             logentry("fatal", "unknown tag '" & command(2) & "' valid tags artist, title, album, genre and year")
     end select
     ' scan and search nr results overwritten by getmp3playlist
-    maxitems = exportm3u(dummy, "*.mp3", "m3u", "exif", command(2), command(3))
-    maxitems = getmp3playlist(exepath + "\" + command(3) + ".m3u", "music")
-    filename = listplay(playtype, "music")
-    currentsong = setcurrentlistitem("music", filename)
-    if currentsong = 1 then
+    listnr = exportm3u(dummy, "*.mp3", "m3u", "exif", command(2), command(3))
+    if listnr < 2 then
         logentry("fatal", "no matches found for " + command(3) + " in " + command(2))
+    else
+        listnr = getmp3playlist(exepath + "\" + command(3) + ".m3u", listtype)
     end if
 end if
 dummy = ""
-
-' prime mp3
-fx1File = filename
-fx1Handle = BASS_StreamCreateFile(0, StrPtr(fx1File), 0, 0, BASS_STREAM_PRESCAN or BASS_SAMPLE_FLOAT)
 
 ' compound seconds to hours, minutes, etc 
 function compoundtime(m As Long) as string
@@ -223,31 +215,27 @@ function compoundtime(m As Long) as string
 End function
 
 ' listduration for recursive scan dir
-if maxitems > 1 or (instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0) then
+if listnr > 1 then
     Dim scanhandle As HSTREAM
-    dim tmp        as long
-    dim cnt        as integer = 1
-    maxitems = 1
-    itemlist = exepath + "\music.tmp"
-    tmp = readfromfile(itemlist)
     cls
+    getuilabelvalue("listcalc")
     ' count items in list and tally duration songs
-    Do Until EOF(tmp)
-        Locate 1, 1   
-        print "scanning folder for audiofiles and creating playlist..."
-        Line Input #tmp, listitem
-        scanhandle = BASS_StreamCreateFile(0, StrPtr(listitem), 0, 0, BASS_STREAM_DECODE)
-        ' length in bytes
-        chanlengthbytes = BASS_ChannelGetLength(scanhandle, BASS_POS_BYTE)
-        ' convert bytes to seconds
-        tracklength = BASS_ChannelBytes2Seconds(scanhandle, chanlengthbytes)
-        listduration = listduration + tracklength
-        print cnt
-        cnt += 1
-        maxitems += 1
-        BASS_StreamFree(scanhandle)    
-    Loop
-    close(tmp)
+
+    for i as integer = 0 to listnr
+        with listrec
+            if listrec.listtype(i) = listtype then
+                scanhandle      = BASS_StreamCreateFile(0, StrPtr(listrec.listfile(i)), 0, 0, BASS_STREAM_DECODE)
+                ' length in bytes
+                chanlengthbytes = BASS_ChannelGetLength(scanhandle, BASS_POS_BYTE)
+                ' convert bytes to seconds
+                tracklength     = BASS_ChannelBytes2Seconds(scanhandle, chanlengthbytes)
+                listduration    = listduration + tracklength
+                BASS_StreamFree(scanhandle)
+                locate 1,30
+                print i;
+            end if
+        end with
+    next i
 end if
 
 ' set os fader volume app channel
@@ -336,19 +324,118 @@ function displayvolumeosmixer(volume as ulong) as integer
     return int(volume)
 end function
 
+function isstream(byref s as string) as integer
+    dim as string u = lcase(trim(s))
+    if left(u, 7) = "http://" then return  -1
+    if left(u, 8) = "https://" then return -1
+    return 0
+end function
+
+sub checkstream(url as string)
+    err = BASS_ErrorGetCode()
+    select case err
+        case BASS_ERROR_NONET
+            logentry("error", "error: no internet connection")
+        case BASS_ERROR_ILLPARAM
+            logentry("error", "error: invalid url/file " + url)
+        case BASS_ERROR_SSL
+            logentry("error", "error: ssl/tls error with " + url)
+        case BASS_ERROR_TIMEOUT
+            logentry("error", "error: connection timed out on " + url)
+        case BASS_ERROR_UNKNOWN
+            logentry("error", "error: unknown error check " + url)
+        case else
+            logentry("warning", "error: unhandled error code " + url)
+    end select
+end sub
+
+sub playmedia(byval index as integer)
+    ' clean
+    if fx1Handle <> 0 then
+        BASS_ChannelStop(fx1Handle)
+        BASS_StreamFree(fx1Handle)
+        fx1Handle = 0
+    end if
+
+    dim as string entry = listrec.listfile(index)
+    if isstream(entry) then
+        dim as string url = entry
+        if url = "" then
+            url = "http://uk3.internet-radio.com:8082/live"  ' fallback
+        end if
+        fx1Handle = BASS_StreamCreateURL(url, 0, 0, 0, 0)
+        if fx1Handle = 0 then
+            checkstream(url)
+            'goto cleanup
+        end if
+        filename = url
+    else
+        filename = entry
+        fx1Handle = BASS_StreamCreateFile(0, StrPtr(filename), 0, 0, BASS_STREAM_PRESCAN)
+        if fx1Handle = 0 then
+            err = BASS_ErrorGetCode()
+            ' log error if you like, then exit
+            exit sub
+        end if
+        getmp3cover(filename)
+    end if
+
+    BASS_ChannelPlay(fx1Handle, 0)
+    erase taginfo
+    cls
+end sub
+
 ' init playback
 dim refreshinfo     as boolean = true
-dim firstmp3        as integer = 1
 dim musiclevel      as single
 dim maxlevel        as single
 dim minlevel        as single
 dim sleeplength     as long = 1000
-readuilabel(exepath + "\conf\" + locale + "\menu.ini")
-getmp3cover(filename)
 BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume)
 currentvolume = getvolumeosmixer() 
-cls
 
+' set active media item
+if isstream(filename) = false then
+    if instr(command(1), ".") > 0 and instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then 
+        currentitem = getcurrentlistitem(listtype, command(1))
+    else
+        currentitem = listnext(listtype, playtype, 0)
+    end if
+    maxitemslist = getmaxitemslist(listtype)
+    setsequence(currentitem)
+    if lcase(playtype) = "linear" then
+        clearseq(listtype)
+    end if
+end if
+
+' play first item
+musicstate  = true
+refreshinfo = true
+playmedia(currentitem)
+
+If isstream(command(1)) Then
+    ' default = 5000 or 5 seconds
+    'BASS_SetConfigPtr(BASS_CONFIG_NET_AGENT, @"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0")
+    'BASS_SetConfig(BASS_CONFIG_NET_TIMEOUT, 20000)
+    'BASS_SetConfig(BASS_CONFIG_NET_BUFFER,  20000)  ' Buffer more data
+    fx1Handle = BASS_StreamCreateURL(command(1), 0, 0, 0, 0)
+    If fx1Handle = 0 Then
+        checkstream(command(1))
+        goto cleanup
+    Else
+        BASS_ChannelPlay(fx1Handle, 0)
+    End If
+End If
+
+
+Dim timerstart As Double
+If isstream(command(1)) Then 
+    Sleep 500, 1
+    gethttpstreaminfo(fx1Handle)
+    timerstart = timer
+End If
+
+cls
 Do
 	Dim As String key = UCase(Inkey)
     sleeplength = 5
@@ -367,7 +454,7 @@ Do
 
 	Select Case key
         Case Chr$(32)
-            ' toggle mp3 mute status
+            ' toggle track mute status
             If musicstate Then
                 BASS_ChannelPause(fx1Handle)
                 musicstate = false
@@ -376,27 +463,22 @@ Do
                 musicstate = true
             End If
         Case "."
-            ' play next mp3
-            BASS_ChannelStop(fx1Handle)    
-            BASS_StreamFree(fx1Handle)    
-            filename = listplay(playtype, "music")
-            getmp3cover(filename)
-            fx1Handle = BASS_StreamCreateFile(0, StrPtr(filename), 0, 0, BASS_STREAM_PRESCAN)
-            BASS_ChannelPlay(fx1Handle, 0)
-            erase taginfo 
-            refreshinfo = true
-            cls
+            ' play next track
+            If isstream(command(1)) = false Then 
+                currentitem = listnext(listtype, playtype, currentitem)
+                if playtype = "shuffle" then
+                    setsequence(currentitem)
+                end if
+                playmedia(currentitem)
+                refreshinfo = true
+            end if
         Case ","
-            ' play previous mp3
-            BASS_ChannelStop(fx1Handle)    
-            BASS_StreamFree(fx1Handle)    
-            filename = listplay("linearmin", "music")
-            getmp3cover(filename)
-            fx1Handle = BASS_StreamCreateFile(0, StrPtr(filename), 0, 0, BASS_STREAM_PRESCAN)
-            BASS_ChannelPlay(fx1Handle, 0)
-            erase taginfo 
-            refreshinfo = true
-            cls
+            ' play previous track
+            If isstream(command(1)) = false Then 
+                currentitem = listprevious(listtype, playtype, currentitem)
+                playmedia(currentitem)
+                refreshinfo = true
+            end if
         Case "]"
             ' fast foward 10 sec
             if secondsPosition < tracklength then
@@ -412,7 +494,7 @@ Do
             end if
             cls
         Case "R"
-            ' restart mp3
+            ' restart track
             BASS_ChannelPlay(fx1Handle, 1)
         Case "L"
             ' change list playtype
@@ -450,23 +532,13 @@ Do
 	End Select
 
     ' auto play next mp3 from list if applicable
-	if BASS_ChannelIsActive(fx1Handle) = 0 and maxitems > 1 and firstmp3 = 0 then
-            ' play next mp3
-            BASS_ChannelStop(fx1Handle)    
-            BASS_StreamFree(fx1Handle)    
-            filename = listplay(playtype, "music")
-            getmp3cover(filename)
-            fx1Handle = BASS_StreamCreateFile(0, StrPtr(filename), 0, 0, BASS_STREAM_PRESCAN)
-            BASS_ChannelPlay(fx1Handle, 0)
-            refreshinfo = true
-            cls
-    end if
-
-    ' play with first song
-    if firstmp3 = 1 then
-        BASS_ChannelPlay(fx1Handle, 0)
-        firstmp3 = 0
-        musicstate = true
+    if BASS_ChannelIsActive(fx1Handle) = 0 and maxitemslist > 1 then
+        currentitem = listnext(listtype, playtype, currentitem)
+        if playtype = "shuffle" then
+            setsequence(currentitem)
+        end if
+        playmedia(currentitem)
+        refreshinfo = true
     end if
 
     ' mp3 play time elapsed
@@ -493,25 +565,43 @@ Do
     getuilabelvalue("quit")
     Print
     ' tag info
-    if refreshinfo = true and instr(filename, ".mp3") <> 0 then
+    if refreshinfo = true and instr(filename, ".mp3") <> 0 and isstream(filename) = false then
         getmp3baseinfo(filename)
         refreshinfo = false
-    end if    
+    end if
+
+    if isstream(filename) and (timer - timerstart) > 5 then
+        gethttpstreaminfo(fx1Handle)
+        timerstart = timer
+        refreshinfo = false
+    end if
+
     getuilabelvalue("artist", taginfo(1))
     getuilabelvalue("title" , taginfo(2))
     getuilabelvalue("album" , taginfo(3))
     getuilabelvalue("year"  , taginfo(4))
     getuilabelvalue("genre" , taginfo(5))
     Print
-    if taginfo(1) <> "----" and taginfo(2) <> "----" then
-        getuilabelvalue("current", currentsong & ". " & taginfo(1) + " - " + taginfo(2))
-    else    
-        getuilabelvalue("current", currentsong & ". " & mid(left(filename, len(filename) - instr(filename, "\") -1), InStrRev(filename, "\") + 1, len(filename)))
+
+    if isstream(filename) = false then
+        if taginfo(1) <> "----" and taginfo(2) <> "----" then
+            getuilabelvalue("current", currentitem & ". " & taginfo(1) + " - " + taginfo(2))
+        else    
+            getuilabelvalue("current", currentitem & ". " & mid(left(filename, len(filename) - instr(filename, "\") -1), InStrRev(filename, "\") + 1, len(filename)))
+        end if
     end if
+    if isstream(filename) then
+        getuilabelvalue("current", "internet radio - " + listrec.listname(currentitem))
+    end if
+
     getuilabelvalue("duration", compoundtime(tracklength) & " / " & compoundtime(CInt(secondsPosition)) & "           ")
     ' song list info
-    getuilabelvalue("list", maxitems & " / " & compoundtime(listduration) & " " & playtype + "  ")
-    getuilabelvalue("file", filename)
+    getuilabelvalue("list", maxitemslist & " / " & compoundtime(listduration) & " " & playtype + "  ")
+    if isstream(filename) then
+        getuilabelvalue("url",  filename)
+    else
+        getuilabelvalue("file", filename)
+    end if
     if musicstate = false then
         getuilabelvalue("volume",  "mute  ")
     else
@@ -526,9 +616,6 @@ Loop
 
 cleanup:
 ' cleanup listplay files
-delfile(exepath + "\" + "music" + ".tmp")
-delfile(exepath + "\" + "music" + ".lst")
-delfile(exepath + "\" + "music" + ".swp")
 delfile(exepath + "\thumb.jpg")
 delfile(exepath + "\thumb.png")
 
