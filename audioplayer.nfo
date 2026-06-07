@@ -1,3 +1,20 @@
+update v2.0 07/06/2026
+- refactored code allowing linux / debian 64 bit compilation
+- added conf.ini options quantum for pipewire
+  drc can get choppy with linux tweaking period and buffer can help
+- added -i or -info option to commandline
+  list bass audio device settings and capabilities
+- fixed info stream not updating frequently
+  every five seconds.
+- fixed radio url passed on commandline crashing player
+- corrected https://github.com/thrive4/app.fb.audioplayer-bass/issues/1
+  increase / decrease volume in help files
+  exist misspelled
+  removed unused declared tmp variable
+- and yes drc is tweaked again partly due to linux support
+  and further reduction of choppy audio with certain
+  audio types.
+
 update v1.9 29/12/2025
 - major rewrite due to implementing new listplay
   shuffleplay now superseded by listplay

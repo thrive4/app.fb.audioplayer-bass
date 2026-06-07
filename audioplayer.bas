@@ -2,42 +2,55 @@
 ' compound time code https://rosettacode.org/wiki/Convert_seconds_to_compound_duration#FreeBASIC
 ' tweaked for fb and un4seen bass 2.4.16.7 sept 2021 by thrive4
 ' https://www.un4seen.com/
-
 #Include once "bass.bi"
-#include once "windows.bi"
+
+#ifdef __FB_WIN32__
 #Include once "win/mmsystem.bi"
+#else
+#define max(a, b) iif((a) > (b), (a), (b))
+#define min(a, b) iif((a) < (b), (a), (b))
+#endif
+
 #include once "utilfile.bas"
 #include once "listplay.bas"
 #include once "utilaudio.bas"
-#cmdline "app.rc"
+#ifdef __FB_WIN32__
+    #cmdline "app.rc"
+#endif
 
 ' setup playback
 dim fileext         as string = ""
-Dim secondsPosition As Double
+dim secondsPosition As Double
 dim chanlengthbytes as QWORD
 dim tracklength     as double
-Dim musicstate      As boolean
-Dim currentvolume   as ulong
+dim musicstate      As boolean
+dim currentvolume   as double
 dim sourcevolume    as single = 0.33f
 dim drcvolume       as single = 0.0f
 dim drc             as string = "true"
+dim shared drcnorm 	as single = 0.5f
 dim locale          as string = "en"
 dim dummy           as string = ""
+dim bassperiod    	as single = 1024
+dim bassbuffer    	as single = 1024
+dim appversion		as string = "1.0"
+' unix volume controle todo needs better intergration
+'dim unixln			as string = ""
+'dim unixvol 		as double = 0.0
 dim shared as string filename
 filename            = ""
 
 ' setup parsing pls and m3u
 dim chkcontenttype  as boolean = false
 dim listduration    as integer
-
 ' setup list of soundfiles
-dim mediafolder  as string
-dim filetypes    as string = ".mp3, .mp4, .ogg, .wav"
+dim mediafolder  	as string
+dim filetypes    	as string = ".mp3, .mp4, .ogg, .wav"
 ' options shuffle, linear
-dim playtype     as string = "linear"
-dim currentitem  as integer
-dim maxitemslist as integer
-dim listtype     as string = "music"
+dim playtype     	as string = "linear"
+dim currentitem  	as integer
+dim maxitemslist 	as integer
+dim listtype     	as string = "music"
 
 ' setup bass
 Dim As String fx1File
@@ -50,14 +63,60 @@ If (BASS_Init(-1, 44100, 0, 0, 0) = FALSE) Then
 	logentry("fatal", "Could not initialize audio! BASS returned error " & BASS_ErrorGetCode())
 End If
 
+function bassinfo() as boolean
+	' Create a BASS_INFO structure
+	Dim info As BASS_INFO
+
+	' Get the device information
+	If BASS_GetInfo(@info) = 0 Then
+		Print "Error getting BASS info"
+		BASS_Free()
+		End
+	End If
+
+	' Print the information
+	print ""
+	Print "bass device Information"
+	Print "========================"
+	Print "frequency:     " & info.freq & " Hz"
+	Print "min rate:      " & info.minrate & " Hz"
+	Print "max rate:      " & info.maxrate & " Hz"
+	Print "hardware size: " & info.hwsize & " bytes"
+	Print "hardware free: " & info.hwfree & " bytes"
+	Print "free samples:  " & info.freesam
+	Print "free 3D:       " & info.free3d
+	Print "speakers:      " & info.speakers
+	Print "eax:           " & IIf(info.eax, "yes", "no")
+	Print "min Buffer:    " & info.minbuf & " ms"
+	Print "latency:       " & info.latency & " ms"
+	Print "flags:         " & Hex(info.flags)
+	print ""
+	Print "bass devices"
+	Print "============="
+
+	Dim infod As BASS_DEVICEINFO
+	Dim device As DWORD = 2  ' Start from device 2 (real devices on Linux)
+
+	' Iterate through available devices
+	While BASS_GetDeviceInfo(device, @infod)
+		Print "device " & device & ": " & *infod.name
+		Print "  driver: " & *infod.driver
+		Print "  flags:  " & Hex(infod.flags)
+		Print ""
+		device += 1
+	Wend
+	
+	return true
+end function
+
 ' init app with config file if present conf.ini
 dim itm     as string
 dim inikey  as string
 dim inival  as string
-dim inifile as string = exepath + "\conf\conf.ini"
+dim inifile as string = exepath + pathchar + "conf" + pathchar + "conf.ini"
 dim f       as long
 if FileExists(inifile) = false then
-    logentry("error", inifile + " file does not excist")
+    logentry("error", inifile + " file does not exist")
 else 
     f = readfromfile(inifile)
     Do Until EOF(f)
@@ -69,6 +128,8 @@ else
                 select case inikey
                     case "defaultvolume"
                         sourcevolume = val(inival)
+                    case "appversion"
+                        appversion = inival
                     case "locale"
                         locale = inival
                     case "usecons"
@@ -81,6 +142,10 @@ else
                         playtype = inival
                     case "drc"
                         drc = inival
+                    case "bassperiod"
+                        bassperiod = val(inival)
+                    case "bassbuffer"
+                        bassbuffer = val(inival)
                 end select
             end if
             'print inikey + " - " + inival
@@ -89,6 +154,16 @@ else
     close(f)    
 end if
 drcvolume = sourcevolume
+#ifdef __FB_LINUX__
+	' optimize bass for pipewire
+	BASS_SetConfig(BASS_CONFIG_DEV_PERIOD, bassperiod) ' quantum
+	BASS_SetConfig(BASS_CONFIG_DEV_BUFFER, bassbuffer) ' buffer
+    logentry("notice", "bass period set to " & bassperiod)
+    logentry("notice", "bass buffer set to " & bassbuffer)
+	' master volume pipewire
+	Const getunixvolume = "wpctl get-volume @DEFAULT_AUDIO_SINK@"
+	exeversion = appversion
+#endif
 
 ' verify locale otherwise set default
 select case locale
@@ -98,7 +173,7 @@ select case locale
         logentry("error", "unsupported locale " + locale + " applying default setting")
         locale = "en"
 end select
-readuilabel(exepath + "\conf\" + locale + "\menu.ini")
+readuilabel(exepath + pathchar + "conf" + pathchar + locale + pathchar + "menu.ini")
 
 ' parse commandline
 select case command(1)
@@ -108,21 +183,32 @@ select case command(1)
     case "-v", "-ver"
         print appname + " version " & exeversion
         goto cleanup
+    case "-i", "-info"
+		bassinfo()
+		goto cleanup
 end select
 
 ' get media
-dummy = resolvepath(command(1))
+if len(command(1)) > 0 then
+	dummy = resolvepath(command(1))
+else
+	dummy = ""
+end if
+
 if instr(dummy, ".m3u") = 0 and instr(dummy, ".pls") = 0 and instr(dummy, "http") = 0 then
     if instr(dummy, ".") <> 0 and instr(dummy, "..") = 0 then
+		if fileexists(dummy) = 0 then
+				logentry("fatal", "error: file not found " & dummy)
+		end if		
         fileext = lcase(mid(dummy, instrrev(dummy, ".")))
         if instr(1, filetypes, fileext) = 0 then
             logentry("fatal", dummy + " file type not supported")
         end if
-        mediafolder = left(dummy, instrrev(dummy, "\"))
+        mediafolder = left(dummy, instrrev(dummy, pathchar))
         createlist(mediafolder, filetypes, listtype)
     else
         ' specific path
-        if instr(dummy, "\") <> 0  then
+        if instr(dummy, pathchar) <> 0  then
             mediafolder = dummy
             if checkpath(mediafolder) = false then
                 logentry("fatal",  "error: path not found " + mediafolder)
@@ -131,7 +217,7 @@ if instr(dummy, ".m3u") = 0 and instr(dummy, ".pls") = 0 and instr(dummy, "http"
                     logentry("fatal", "error: no playable files found")
                 end if
             end if
-        ELSE
+        else
             ' fall back to path mediafolder specified in conf.ini
             if checkpath(mediafolder) = false then
                 logentry("error", "error: mediafolder path " + mediafolder + " not found in conf.ini ")
@@ -155,30 +241,35 @@ if instr(dummy, ".m3u") <> 0 or instr(dummy, ".pls") <> 0 then
     if FileExists(dummy) then
         'nop
     else
-        logentry("fatal", dummy + " file does not excist or possibly use full path to file")
+        logentry("fatal", dummy + " file does not exist or possibly use full path to file")
     end if
     listnr = getmp3playlist(dummy, listtype)
     logentry("notice", "parsing and playing playlist " + filename)
 end if
 
-' search with query and export .m3u 
-if instr(dummy, ":") <> 0 and len(command(2)) <> 0  then
-    select case command(2)
-        case "artist"
-        case "title"
-        case "album"
-        case "year"
-        case "genre"
-        case else
-            logentry("fatal", "unknown tag '" & command(2) & "' valid tags artist, title, album, genre and year")
-    end select
-    ' scan and search nr results overwritten by getmp3playlist
-    listnr = exportm3u(dummy, "*.mp3", "m3u", "exif", command(2), command(3))
-    if listnr < 2 then
-        logentry("fatal", "no matches found for " + command(3) + " in " + command(2))
-    else
-        listnr = getmp3playlist(exepath + "\" + command(3) + ".m3u", listtype)
-    end if
+' search with query and export .m3u hybrid nix windows
+'if instr(dummy, ":") <> 0 and len(command(2)) <> 0  then
+' might work needs validation
+'if len(dummy) <> 0 and len(command(2)) <> 0 then
+if instr(command(2), ".m3u") = 0 and instr(command(2), ".pls") = 0 then
+	if (left(dummy, 1) = "/" or instr(dummy, ":") <> 0) and len(command(2)) <> 0 then
+		select case command(2)
+			case "artist"
+			case "title"
+			case "album"
+			case "year"
+			case "genre"
+			case else
+				logentry("fatal", "unknown tag '" & command(2) & "' valid tags artist, title, album, genre and year")
+		end select
+		' scan and search nr results overwritten by getmp3playlist
+		listnr = exportm3u(dummy, "*.mp3", "m3u", "exif", command(2), command(3))
+		if listnr < 2 then
+			logentry("fatal", "no matches found for " + command(3) + " in " + command(2))
+		else
+			listnr = getmp3playlist(exepath + pathchar + command(3) + ".m3u", listtype)
+		end if
+	end if
 end if
 dummy = ""
 
@@ -220,7 +311,6 @@ if listnr > 1 then
     cls
     getuilabelvalue("listcalc")
     ' count items in list and tally duration songs
-
     for i as integer = 0 to listnr
         with listrec
             if listrec.listtype(i) = listtype then
@@ -239,14 +329,52 @@ if listnr > 1 then
 end if
 
 ' set os fader volume app channel
-function setvolumeosmixer(volume as ulong) as boolean
+function setvolumeosmixer(volume as double, gain as string) as double
 
+#ifdef __FB_UNIX__
+	dim f       as long
+	dim unixln as string
+	f = FreeFile
+	Open Pipe getunixvolume For Input As f
+		Do Until EOF(1)
+			Line Input #1, unixln
+		Loop
+	Close f
+	volume = val(trim(replace(trim(unixln), "Volume:", "")))
+	select case gain
+		case "+"
+			If volume < 1.0 Then
+				volume += 0.05
+				If volume > 1.0 Then volume = 1.0
+				Shell "wpctl set-volume @DEFAULT_AUDIO_SINK@ " & Trim(Str(volume * 100)) & "%"
+			End If
+		case "-"
+			If volume > 0.0 Then
+				volume -= 0.05
+				If volume < 0.0 Then volume = 0.0
+				Shell "wpctl set-volume @DEFAULT_AUDIO_SINK@ " & Trim(Str(volume * 100)) & "%"
+			End If
+	end select
+#endif			
+
+#ifdef __FB_WIN32__
     Dim hMixer      As HMIXER
     Dim mxlc        As MIXERLINECONTROLS
     Dim mxcd        As MIXERCONTROLDETAILS
     Dim mxcd_vol    As MIXERCONTROLDETAILS_UNSIGNED
     Dim mxl         As MIXERLINE
     Dim mxlc_vol    As MIXERCONTROL
+	' min max volume
+	select case gain
+		case "+"
+			' increase fader mixer os volume (in range 0 - 65535)
+			volume = volume + 1000
+			if volume > 65535 then volume = 65535 end if
+		case "-"
+			' decrease fader mixer os volume (in range 0 - 65535)
+			volume = volume - 1000
+			if volume < 1001 then volume = 0 end if
+	end select
 
     ' Open the mixer
     mixerOpen(@hMixer, 0, 0, 0, 0)
@@ -273,15 +401,17 @@ function setvolumeosmixer(volume as ulong) as boolean
     mxcd.hwndOwner = 0
     mixerSetControlDetails(hMixer, @mxcd, MIXER_SETCONTROLDETAILSF_VALUE)
 
-    ' close the mixer
     mixerClose(hMixer)
-    return true
+#endif
+
+	return volume
 
 end function
 
 ' get os fader volume app channel
-function getvolumeosmixer() as ulong
+function getvolumeosmixer() as double
 
+#ifdef __FB_WIN32__
     Dim hMixer      As HMIXER
     Dim mxlc        As MIXERLINECONTROLS
     Dim mxcd        As MIXERCONTROLDETAILS
@@ -309,19 +439,38 @@ function getvolumeosmixer() as ulong
     mxcd.paDetails      = @mxcd_vol
     mixerGetControlDetails(hMixer, @mxcd, MIXER_GETCONTROLDETAILSF_VALUE)
 
-    ' close the mixer
     mixerClose(hMixer)
     
     ' return volume app channel
     return mxcd_vol.dwValue
+#endif
+
+#ifdef __FB_UNIX__
+	dim f       as long
+	dim unixln as string
+	f = FreeFile
+	Open Pipe getunixvolume For Input As f
+		Do Until EOF(1)
+			Line Input #1, unixln
+		Loop
+	Close f
+	return cdbl(trim(replace(trim(unixln), "Volume:", "")))
+#endif
 
 end function
 
 ' convert os fader volume app channel
+function displayvolumeosmixer(volume as double) as integer
 ' scale from 0 ~ 65535 to 0 ~ 100 (windows mixer)
-function displayvolumeosmixer(volume as ulong) as integer
+#ifdef __FB_WIN32__
     volume = volume / (65535 * 0.01)
     return int(volume)
+#endif
+' todo is still master channel not app channel
+#ifdef __FB_UNIX__
+	volume = volume * 100
+	return volume
+#endif
 end function
 
 function isstream(byref s as string) as integer
@@ -356,7 +505,6 @@ sub playmedia(byval index as integer)
         BASS_StreamFree(fx1Handle)
         fx1Handle = 0
     end if
-
     dim as string entry = listrec.listfile(index)
     if isstream(entry) then
         dim as string url = entry
@@ -381,6 +529,7 @@ sub playmedia(byval index as integer)
     end if
 
     BASS_ChannelPlay(fx1Handle, 0)
+	drcnorm = 0.5f
     erase taginfo
     cls
 end sub
@@ -394,6 +543,10 @@ dim sleeplength     as long = 1000
 BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume)
 currentvolume = getvolumeosmixer() 
 
+' play first item
+musicstate  = true
+refreshinfo = true
+
 ' set active media item
 if isstream(filename) = false then
     if instr(command(1), ".") > 0 and instr(command(1), ".m3u") = 0 and instr(command(1), ".pls") = 0 then 
@@ -406,12 +559,8 @@ if isstream(filename) = false then
     if lcase(playtype) = "linear" then
         clearseq(listtype)
     end if
+	playmedia(currentitem)
 end if
-
-' play first item
-musicstate  = true
-refreshinfo = true
-playmedia(currentitem)
 
 If isstream(command(1)) Then
     ' default = 5000 or 5 seconds
@@ -427,7 +576,6 @@ If isstream(command(1)) Then
     End If
 End If
 
-
 Dim timerstart As Double
 If isstream(command(1)) Then 
     Sleep 500, 1
@@ -436,23 +584,31 @@ If isstream(command(1)) Then
 End If
 
 cls
+
 Do
 	Dim As String key = UCase(Inkey)
-    sleeplength = 5
+	sleeplength = 5
 
     ' ghetto attempt of dynamic range compression audio
-    if drc = "true" then
-        musiclevel      = BASS_ChannelGetLevel(fx1Handle)
-        minlevel        = min(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
-        maxlevel        = max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
-        drcvolume       = min(1.75f + (7.0f - maxlevel), max(0.0f, (1.55f - minlevel)) * (7.0f - maxlevel))
-        drcvolume       = drcvolume * sourcevolume
-        BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, drcvolume)
-    else
-        BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume) 
-    end if
+	if drc = "true" then
+		musiclevel = BASS_ChannelGetLevel(fx1Handle)
+		minlevel = min(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
+		maxlevel = max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
+		
+		const smoothfactor    = 0.1f 'def 0.5f
+		drcnorm = drcnorm * (1.0f - smoothfactor) + minlevel * smoothfactor
+		' invert quieter songs boost more, louder songs less
+		const targetlevel = 0.5f ' ~50% of max headroom
+		dim as single makeupgain = targetlevel / max(0.05f, drcnorm)
+		
+		' clamp safe range max(<reduce loud songs> min(<increase volume quiet songs
+		drcvolume = max(0.7f, min(3.3f, makeupgain)) * sourcevolume
+		BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, drcvolume)
+	else
+		BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume)
+	end if
 
-	Select Case key
+	Select Case ucase(key)
         Case Chr$(32)
             ' toggle track mute status
             If musicstate Then
@@ -514,15 +670,11 @@ Do
                     drc = "true"
             end select
         Case "-"
-            ' decrease fader mixer os volume (in range 0 - 65535)
-            currentvolume = currentvolume - 1000
-            if currentvolume < 1001 then currentvolume = 0 end if
-            setvolumeosmixer(currentvolume)
+            ' decrease volume
+            currentvolume = setvolumeosmixer(currentvolume, key)
         Case "+"
-            ' increase fader mixer os volume (in range 0 - 65535)
-            currentvolume = currentvolume + 1000
-            if currentvolume > 65535 then currentvolume = 65535 end if
-            setvolumeosmixer(currentvolume)
+            ' increase volume
+            currentvolume = setvolumeosmixer(currentvolume, key)
         Case Chr(27)
             Exit Do
         case else
@@ -616,8 +768,8 @@ Loop
 
 cleanup:
 ' cleanup listplay files
-delfile(exepath + "\thumb.jpg")
-delfile(exepath + "\thumb.png")
+delfile(exepath + pathchar + "thumb.jpg")
+delfile(exepath + pathchar + "thumb.png")
 
 ' Free all resources allocated by BASS
 BASS_Free()

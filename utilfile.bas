@@ -1,8 +1,16 @@
-' used for app launcher
-#include once "crt/process.bi"
 ' dir function and provides constants to use for the attrib_mask parameter
 #include once "vbcompat.bi"
 #include once "dir.bi"
+
+dim shared pathchar as string
+dim shared newline	as string
+#ifdef __FB_LINUX__
+	pathchar = "/"
+	newline  = "\r\n"	
+#else
+	pathchar = "\"
+	newline  = "\n"	
+#endif
 
 ' setup log
 dim shared logfile    as string
@@ -13,7 +21,7 @@ dim shared usecons    as string
 dim shared exeversion as string
 
 ' note command(0) can arbitraly add the path so strip it
-appname = mid(command(0), instrrev(command(0), "\") + 1)
+appname = mid(command(0), instrrev(command(0), pathchar) + 1)
 ' without file extension
 if instr(appname, ".exe") > 0 then
     appname = left(appname, len(appname) - 4)
@@ -73,7 +81,7 @@ Function logentry(entrytype As String, logmsg As String) As Boolean
     ' setup logfile
     dim f as long
     f = FreeFile
-    logfile = exepath + "\" + appname + ".log"
+    logfile = exepath + pathchar + appname + ".log"
     if FileExists(logfile) = false then
         Open logfile For output As #f
         print #f, format(now, "dd/mm/yyyy") + " - " + time + "|" + "notice" + "|" + appname + "|" + logfile + " created"
@@ -105,6 +113,7 @@ End function
 
 ' get fileversion executable or dll
 function getfileversion(versinfo() as string, versdesc() as string) as integer
+#ifdef __FB_WIN32__
 
     dim as integer bytesread,c,dwHandle,res,verSize
     dim as string buffer,ls,qs,tfn
@@ -132,7 +141,7 @@ function getfileversion(versinfo() as string, versdesc() as string) as integer
     ls=hex(*b1,4)& hex(*b2,4)
 
     for c=0 to 7
-        qs="\StringFileInfo\" & ls & "\" & versdesc(c)
+        qs="\StringFileInfo\" & ls & pathchar & versdesc(c)
         res=_
             VerQueryValue(_
                 verdat,_
@@ -150,7 +159,8 @@ function getfileversion(versinfo() as string, versdesc() as string) as integer
     deallocate(verdat)
 
     return 1
-
+#endif
+return 1
 end function
 
 ' generic file functions
@@ -204,14 +214,18 @@ function getfolders (filespec As String, ordinance() As String) as uinteger
 end function
 
 function getdrivelabel(drive as string) as string
+#ifdef __FB_WIN32__
     Dim As ZString * 1024 deviceName
     Dim As ZString * 1024 volumeName
     QueryDosDevice(drive, deviceName, 1024)
     GetVolumeInformation(drive, volumeName, 1024, 0, 0, 0, 0, 0)
     return volumeName
+#endif
+return "nix"
 end function
 
 function getdrivestorage(drive as string, metric as string) as ULongInt
+#ifdef __FB_WIN32__
     Dim As ULARGE_INTEGER freeBytesAvailable
     Dim As ULARGE_INTEGER totalNumberOfBytes
     Dim As ULARGE_INTEGER totalNumberOfFreeBytes
@@ -228,6 +242,8 @@ function getdrivestorage(drive as string, metric as string) as ULongInt
     '    Print "Error: "; GetLastError()
         return 0
     End If
+#endif
+return 0
 end function
 
 function convertbytesize(totalsize as longint) as string
@@ -252,7 +268,7 @@ Function newfile(filename As String) As boolean
     Dim f As long
 
     if FileExists(filename) then
-        logentry("warning", "creating " + filename + " file excists")
+        logentry("warning", "creating " + filename + " file exists")
         return false
     end if    
 
@@ -269,7 +285,7 @@ Function appendfile(filename As String, msg as string) As boolean
     Dim f As long
 
     if FileExists(filename) = false then
-        logentry("error", "appending " + filename + " file does not excist")
+        logentry("error", "appending " + filename + " file does not exist")
         return false
     end if
 
@@ -286,7 +302,7 @@ Function readfromfile(filename As String) As long
     Dim f As long
 
     if FileExists(filename) = false then
-        logentry("error", "reading " + filename + " file does not excist")
+        logentry("error", "reading " + filename + " file does not exist")
     end if
 
     f = FreeFile
@@ -325,23 +341,53 @@ Function checkpath(chkpath As String) As boolean
 
 End Function
 
+' declare realpath from c library only works on nix
+#ifdef __FB_UNIX__
+    Declare Function realpath Cdecl Alias "realpath" (Byval pathname As ZString Ptr, Byval resolved_path As ZString Ptr) As ZString Ptr
+    Declare Function getcwd   Cdecl Alias "getcwd"   (Byval buffer As ZString Ptr, Byval size As Integer) As ZString Ptr
+#endif
+
 ' resolve path commandline argument
 Function resolvepath(path As String) As String
-    Dim buffer        as String * 260
-    dim resolvedpath  as string
-    Dim length        as Integer 
+    ' Handle URLs first
+    If Left$(LCase$(path), 7) = "http://" Or Left$(LCase$(path), 8) = "https://" Then
+        Return path
+    End If
 
-    if left$(lcase(path), 7) = "http://" or left$(lcase(path), 8) = "https://" then
-        resolvedpath = path
-    else
-        length = GetFullPathName(path, 260, buffer, Null)
-        If length > 0 Then
-            resolvedpath = Left(buffer, length)
+#ifdef __FB_WIN32__
+    Dim buffer As String * 4096
+    Dim length As Integer
+    length = GetFullPathName(path, 4096, buffer, Null)
+    If length > 0 Then
+        Return Left$(buffer, length)
+    Else
+        Return path
+    End If
+#else
+    Dim buffer As ZString * 4096
+
+    If Left$(path, 1) = "/" Then
+        If realpath(StrPtr(path), @buffer) <> 0 Then
+            Return *StrPtr(buffer)
         Else
-            resolvedpath = path ' fallback if API fails
+            Return path
         End If
-    end if
-    return resolvedpath
+    End If
+
+    If realpath(StrPtr(path), @buffer) <> 0 Then
+        Return *StrPtr(buffer)
+    Else
+        Dim cwd As ZString * 4096
+        If getcwd(@cwd, 4096) <> 0 Then
+            Dim result As String = *StrPtr(cwd)
+            If Right$(result, 1) <> "/" Then result &= "/"
+            result &= path
+            Return result
+        Else
+            Return path
+        End If
+    End If
+#endif
 End Function
 
 ' localization file functions
@@ -380,8 +426,8 @@ Function readuilabel(filename as string) as boolean
     dim f      as integer
 
     if FileExists(filename) = false then
-        logentry("error", filename + " does not excist switching to default language")
-        filename = exepath + "\conf\en\menu.ini"
+        logentry("error", filename + " does not exist switching to default language")
+        filename = exepath + pathchar +"conf" + pathchar + "en" + pathchar + "menu.ini"
     end if
     f = readfromfile(filename)
     Do Until EOF(f)

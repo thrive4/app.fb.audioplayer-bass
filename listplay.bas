@@ -21,12 +21,6 @@ function createlist(folder as string, filterext as string, listtype as string) a
     dim maxfiles       as integer
     dim dummy          as string = curdir
 
-    #ifdef __FB_LINUX__
-      const pathchar = "/"
-    #else
-      const pathchar = "\"
-    #endif
-
     if chdir(folder) <> 0 then
         chdir(dummy)
         print folder + " " + "not found"

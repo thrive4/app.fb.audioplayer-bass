@@ -10,12 +10,12 @@ When a file or path is specified the current dir and sub dir(s)\
 will be scanned for audio file(s) which will generate an internal playlist
 
 ## usage
-audioplayer.exe "path to file or folder"\
+audioplayer.exe "path to file, folder or list (.m3u or .pls)"\
 if a file or path is specified the folder will be scanned for an audio file\
 if the folder has subfolder(s) these will be scanned for audio files as well.
 
 generate .m3u: audioplayer "path to file or folder" "tag" "tagquery"\
-example: audioplayer.exe g:datamp3classic artist beethoven\
+example: audioplayer.exe g:\data\mp3\classic artist beethoven\
 generates the m3u file beethoven.m3u\
 which then can be played by audioplayer.exe beethoven.m3u
 * simple search so 195 is equivelant of ?195? or *195*
@@ -24,11 +24,12 @@ which then can be played by audioplayer.exe beethoven.m3u
 * supported tags artist, title, album, genre and year
 
 ## install
-open zip file and copy contents to preferd folder\
+open zip or xz file and copy contents to preferd folder\
 this application is **portable**.
 
 ## configuration
 basic config options in conf.ini\
+```
 locale          = <en, es, de, fr, nl>\
 defaultvolume   = <0.0 .. 1.0>\
 playtype        = <shuffle, linear>\
@@ -36,12 +37,12 @@ playtype        = <shuffle, linear>\
 drc             = <true, false>\
 ' location media\
 mediafolder = g:datamp3classic\
-' location thumbnail media for station\
-' example: uk3 internet-radio.jpg put in ...\
-radiofolder = g:internetradio
+```
 
 ## requirements
-bass.dll (32bit)\
+windows bass.dll (32bit)\
+or
+linux libbass.so (64bit)\
 https://www.un4seen.com/
 
 ## performance
@@ -65,9 +66,26 @@ press -     to increase volume\
 press +     to decrease volume\
 press esc   to quit
 
-# special thanks to
+## linux specific
+debian version bundeld with package.
+*note! only tested 64bits compile on pop os 24.04 debian / unbuntu*
+
+launch with ./audioplayer.sh
+
+conf.ini
+```
+' location media\
+mediafolder = /mountpoint/\
+' linux only set bass buffer size to
+' match pipewires quantum ignored on windows
+' quantum
+bassperiod = 512
+' buffer
+bassbuffer = 2048
+```
+
+## special thanks to
 squall4226 for getmp3tag\
 see https://www.freebasic.net/forum/viewtopic.php?p=149207&hilit=user+need+TALB+for+album#p149207 \
 rosetta code for compoundtime\
 https://rosettacode.org/wiki/Convert_seconds_to_compound_duration#FreeBASIC
-
