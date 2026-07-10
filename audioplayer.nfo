@@ -1,3 +1,11 @@
+update v2.1 04/07/2026
+- refactored code allowing windows 64 bit compilation
+- sunset 32bits support windows
+- drc revamped technique 64bits compatible
+  allows for more subtle volume changes
+- added bass.dll 64bits lib
+- various small fixes
+
 update v2.0 07/06/2026
 - refactored code allowing linux / debian 64 bit compilation
 - added conf.ini options quantum for pipewire

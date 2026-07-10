@@ -6,10 +6,10 @@ dim shared pathchar as string
 dim shared newline	as string
 #ifdef __FB_LINUX__
 	pathchar = "/"
-	newline  = "\r\n"	
+	newline  = "\n"
 #else
 	pathchar = "\"
-	newline  = "\n"	
+	newline  = "\r\n"	
 #endif
 
 ' setup log
@@ -115,45 +115,45 @@ End function
 function getfileversion(versinfo() as string, versdesc() as string) as integer
 #ifdef __FB_WIN32__
 
-    dim as integer bytesread,c,dwHandle,res,verSize
-    dim as string buffer,ls,qs,tfn
-    dim as ushort ptr b1,b2
+    dim as dword bytesread, c, dwHandle, res, verSize
+    dim as string buffer, ls, qs, tfn
+    dim as ushort ptr b1, b2
     dim as ubyte ptr bptr
 
-    tfn=versinfo(8)
-    if dir(tfn)="" then return -1
-    verSize=GetFileVersionInfoSize(tfn,@dwHandle)
-    if verSize=0 then return -2
-    dim as any ptr verdat=callocate(verSize*2)
+    tfn = versinfo(8)
+    if dir(tfn) = "" then return -1
+    verSize = GetFileVersionInfoSize(tfn, @dwHandle)
+    if verSize = 0 then return -2
+    dim as any ptr verdat = callocate(verSize)
 
-    res=GetFileVersionInfo(strptr(tfn),dwHandle,verSize*2,verdat)
-    res=_
+    res = GetFileVersionInfo(strptr(tfn), dwHandle, verSize, verdat)
+    res = _
         VerQueryValue(_
-            verdat,_
-            "\VarFileInfo\Translation",_
-            @bptr,_
+            verdat, _
+            "\VarFileInfo\Translation", _
+            @bptr, _
             @bytesread)
 
-    if bytesread=0 then deallocate(verdat):return -3
+    if bytesread = 0 then deallocate(verdat): return -3
 
-    b1=cast(ushort ptr,bptr)
-    b2=cast(ushort ptr,bptr+2)
-    ls=hex(*b1,4)& hex(*b2,4)
+    b1 = cast(ushort ptr, bptr)
+    b2 = cast(ushort ptr, bptr + 2)
+    ls = hex(*b1, 4) & hex(*b2, 4)
 
-    for c=0 to 7
-        qs="\StringFileInfo\" & ls & pathchar & versdesc(c)
-        res=_
+    for c = 0 to 7
+        qs = "\StringFileInfo\" & ls & pathchar & versdesc(c)
+        res = _
             VerQueryValue(_
-                verdat,_
-                strptr(qs),_
-                @bptr,_
+                verdat, _
+                strptr(qs), _
+                @bptr, _
                 @bytesread)
-        if bytesread>0 then
-            buffer=space(bytesread)
-            CopyMemory(strptr(buffer),bptr,bytesread)
-            versinfo(c)=buffer
+        if bytesread > 0 then
+            buffer = space(bytesread)
+            CopyMemory(strptr(buffer), bptr, bytesread)
+            versinfo(c) = buffer
         else
-            versinfo(c)="N/A"
+            versinfo(c) = "N/A"
         end if
     next c
     deallocate(verdat)

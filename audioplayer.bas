@@ -2,6 +2,9 @@
 ' compound time code https://rosettacode.org/wiki/Convert_seconds_to_compound_duration#FreeBASIC
 ' tweaked for fb and un4seen bass 2.4.16.7 sept 2021 by thrive4
 ' https://www.un4seen.com/
+#ifdef __FB_WIN32__
+    #cmdline "app.rc"
+#endif
 #Include once "bass.bi"
 
 #ifdef __FB_WIN32__
@@ -14,9 +17,6 @@
 #include once "utilfile.bas"
 #include once "listplay.bas"
 #include once "utilaudio.bas"
-#ifdef __FB_WIN32__
-    #cmdline "app.rc"
-#endif
 
 ' setup playback
 dim fileext         as string = ""
@@ -175,17 +175,29 @@ select case locale
 end select
 readuilabel(exepath + pathchar + "conf" + pathchar + locale + pathchar + "menu.ini")
 
+Sub cleanup(pathchar As String, appname as string)
+    delfile(exepath + pathchar + "thumb.jpg")
+    delfile(exepath + pathchar + "thumb.png")
+	' free all resources allocated by BASS
+	BASS_Free()
+	close
+	logentry("terminate", "normal termination " + appname)
+End Sub
+
 ' parse commandline
 select case command(1)
     case "/?", "-h", "-help", "--help", "-man"
         displayhelp(locale)
-        goto cleanup
+        'goto cleanup
+		cleanup(pathchar, appname)
     case "-v", "-ver"
         print appname + " version " & exeversion
-        goto cleanup
+'        goto cleanup
+		cleanup(pathchar, appname)
     case "-i", "-info"
 		bassinfo()
-		goto cleanup
+'		goto cleanup
+		cleanup(pathchar, appname)
 end select
 
 ' get media
@@ -385,7 +397,7 @@ function setvolumeosmixer(volume as double, gain as string) as double
     mxlc.cControls      = 1
     mxlc.cbmxctrl       = SizeOf(MIXERCONTROL)
     mxlc.pamxctrl       = @mxlc_vol
-    mixerGetLineControls(hMixer, @mxlc, MIXER_GETLINECONTROLSF_ONEBYTYPE)
+    mixerGetLineControls( cast(HMIXEROBJ, hMixer), @mxlc, MIXER_GETLINECONTROLSF_ONEBYTYPE )
 
     ' get fader volume app channel
     mxcd.cbStruct = SizeOf(MIXERCONTROLDETAILS)
@@ -394,12 +406,12 @@ function setvolumeosmixer(volume as double, gain as string) as double
     mxcd.cMultipleItems = 0
     mxcd.cbDetails      = SizeOf(MIXERCONTROLDETAILS_UNSIGNED)
     mxcd.paDetails      = @mxcd_vol
-    mixerGetControlDetails(hMixer, @mxcd, MIXER_GETCONTROLDETAILSF_VALUE)
+    mixerGetControlDetails( cast(HMIXEROBJ, hMixer), @mxcd, MIXER_GETCONTROLDETAILSF_VALUE )
 
     ' set fader volume app channel
     mxcd_vol.dwValue = volume
     mxcd.hwndOwner = 0
-    mixerSetControlDetails(hMixer, @mxcd, MIXER_SETCONTROLDETAILSF_VALUE)
+    mixerSetControlDetails( cast(HMIXEROBJ, hMixer), @mxcd, MIXER_SETCONTROLDETAILSF_VALUE )
 
     mixerClose(hMixer)
 #endif
@@ -428,7 +440,7 @@ function getvolumeosmixer() as double
     mxlc.cControls      = 1
     mxlc.cbmxctrl       = SizeOf(MIXERCONTROL)
     mxlc.pamxctrl       = @mxlc_vol
-    mixerGetLineControls(hMixer, @mxlc, MIXER_GETLINECONTROLSF_ONEBYTYPE)
+    mixerGetLineControls( cast(HMIXEROBJ, hMixer), @mxlc, MIXER_GETLINECONTROLSF_ONEBYTYPE )
 
     ' get fader volume app channel
     mxcd.cbStruct       = SizeOf(MIXERCONTROLDETAILS)
@@ -437,7 +449,7 @@ function getvolumeosmixer() as double
     mxcd.cMultipleItems = 0
     mxcd.cbDetails      = SizeOf(MIXERCONTROLDETAILS_UNSIGNED)
     mxcd.paDetails      = @mxcd_vol
-    mixerGetControlDetails(hMixer, @mxcd, MIXER_GETCONTROLDETAILSF_VALUE)
+    mixerGetControlDetails( cast(HMIXEROBJ, hMixer), @mxcd, MIXER_GETCONTROLDETAILSF_VALUE )
 
     mixerClose(hMixer)
     
@@ -536,7 +548,7 @@ end sub
 
 ' init playback
 dim refreshinfo     as boolean = true
-dim musiclevel      as single
+dim musiclevel      as ulong
 dim maxlevel        as single
 dim minlevel        as single
 dim sleeplength     as long = 1000
@@ -570,7 +582,8 @@ If isstream(command(1)) Then
     fx1Handle = BASS_StreamCreateURL(command(1), 0, 0, 0, 0)
     If fx1Handle = 0 Then
         checkstream(command(1))
-        goto cleanup
+'        goto cleanup
+		cleanup(pathchar, appname)
     Else
         BASS_ChannelPlay(fx1Handle, 0)
     End If
@@ -591,18 +604,37 @@ Do
 
     ' ghetto attempt of dynamic range compression audio
 	if drc = "true" then
+        ' only compiles on 64 bits freebasic issue?
+		Dim ci As BASS_CHANNELINFO
+		BASS_ChannelGetInfo(fx1Handle, @ci)
+		Dim levels As Single Ptr = CAllocate(ci.chans * SizeOf(Single))
+
+		BASS_ChannelGetLevelEx(fx1Handle, levels, 0.3, 0) ' def 0.08
+
+		' access individual channel levels
+		minlevel = levels[0]
+		maxlevel = levels[0]
+
+		For i As Integer = 0 To ci.chans - 1
+			If levels[i] < minlevel Then minlevel = levels[i]
+			If levels[i] > maxlevel Then maxlevel = levels[i]
+		Next
+		Deallocate(levels)
+
+/'
+        ' use for 32 bits rougher volume handling
 		musiclevel = BASS_ChannelGetLevel(fx1Handle)
-		minlevel = min(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
-		maxlevel = max(loWORD(musiclevel), HIWORD(musiclevel)) / 32768.0f
+		minlevel   = csng(min(loWORD(musiclevel), HIWORD(musiclevel))) / 32768.0f
+		maxlevel   = csng(max(loWORD(musiclevel), HIWORD(musiclevel))) / 32768.0f
+'/
 		
-		const smoothfactor    = 0.1f 'def 0.5f
-		drcnorm = drcnorm * (1.0f - smoothfactor) + minlevel * smoothfactor
+		const as single smoothfactor    = 0.055f ' max overshoot decrease
+		drcnorm = drcnorm * (0.925f - smoothfactor) + minlevel * smoothfactor
 		' invert quieter songs boost more, louder songs less
-		const targetlevel = 0.5f ' ~50% of max headroom
-		dim as single makeupgain = targetlevel / max(0.05f, drcnorm)
-		
+		const as single targetlevel = 0.5f ' ~50% of max headroom
+		dim as single makeupgain = targetlevel / max(0.195f, drcnorm)		
 		' clamp safe range max(<reduce loud songs> min(<increase volume quiet songs
-		drcvolume = max(0.7f, min(3.3f, makeupgain)) * sourcevolume
+		drcvolume = max(maxlevel, min(2.345f, makeupgain)) * sourcevolume
 		BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, drcvolume)
 	else
 		BASS_ChannelSetAttribute(fx1Handle, BASS_ATTRIB_VOL, sourcevolume)
@@ -680,7 +712,7 @@ Do
         case else
             ' detect volume change via os mixer
             currentvolume = getvolumeosmixer()
-            sleeplength = 1000
+            sleeplength = 400
 	End Select
 
     ' auto play next mp3 from list if applicable
@@ -766,12 +798,5 @@ Do
 
 Loop
 
-cleanup:
-' cleanup listplay files
-delfile(exepath + pathchar + "thumb.jpg")
-delfile(exepath + pathchar + "thumb.png")
-
-' Free all resources allocated by BASS
-BASS_Free()
-close
-logentry("terminate", "normal termination " + appname)
+' clean up and close
+cleanup(pathchar, appname)
